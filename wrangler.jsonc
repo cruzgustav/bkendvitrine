@@ -10,6 +10,7 @@
 
   // --- Cloudflare Pages ---
   // Diretório de assets estáticos (upload automático no Pages deploy)
+  // O _worker.js nesse diretório é o entry point do Worker (SSR + API)
   "pages_build_output_dir": ".open-next/assets",
 
   // Variáveis de ambiente (NÃO colocar secrets aqui - usar wrangler pages secret)
@@ -20,21 +21,5 @@
   // Limites do Worker
   "limits": {
     "cpu_ms": 30000
-  },
-
-  // Ambientes do Pages (preview = staging, production = produção)
-  "env": {
-    "preview": {
-      "name": "tabackvitrine-api-preview",
-      "vars": {
-        "CORS_ALLOWED_ORIGINS": "*"
-      }
-    },
-    "production": {
-      "name": "tabackvitrine-api",
-      "vars": {
-        "CORS_ALLOWED_ORIGINS": ""  // Configurar com as origens reais em produção
-      }
-    }
   }
 }
