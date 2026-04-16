@@ -7,7 +7,7 @@
   // projetado para Workers (não Pages). Use `wrangler deploy`.
   // ============================================================
 
-  "name": "tabackvitrine-api",
+  "name": "bkendvitrine",
   "compatibility_flags": ["nodejs_compat"],
   "compatibility_date": "2025-04-17",
 
@@ -23,10 +23,5 @@
   // Variáveis de ambiente (NÃO colocar secrets aqui - usar wrangler secret)
   "vars": {
     "CORS_ALLOWED_ORIGINS": "*"
-  },
-
-  // Limites do Worker
-  "limits": {
-    "cpu_ms": 30000
   }
 }
