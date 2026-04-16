@@ -13,12 +13,11 @@
     "db:reset": "prisma migrate reset",
     "backup": "bun run scripts/backup.ts",
     "seed": "bun run scripts/seed.ts",
-    "cf:build": "node scripts/cf-pages-build.mjs",
-    "cf:build:worker": "npx @opennextjs/cloudflare build",
+    "cf:build": "npx @opennextjs/cloudflare build",
     "cf:preview": "npx @opennextjs/cloudflare build && npx wrangler dev",
-    "cf:deploy": "node scripts/cf-pages-build.mjs && npx wrangler pages deploy .open-next/assets --project-name=tabackvitrine-api",
-    "cf:deploy:preview": "node scripts/cf-pages-build.mjs && npx wrangler pages deploy .open-next/assets --project-name=tabackvitrine-api --branch preview",
-    "cf:deploy:prod": "node scripts/cf-pages-build.mjs && npx wrangler pages deploy .open-next/assets --project-name=tabackvitrine-api --branch production"
+    "cf:deploy": "npx @opennextjs/cloudflare build && npx wrangler deploy",
+    "cf:deploy:staging": "npx @opennextjs/cloudflare build && npx wrangler deploy --env staging",
+    "cf:deploy:prod": "npx @opennextjs/cloudflare build && npx wrangler deploy --env production"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

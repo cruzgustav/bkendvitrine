@@ -1,19 +1,26 @@
 {
   // ============================================================
-  // Configuração Cloudflare Pages para o tabackvitrine
-  // Docs: https://developers.cloudflare.com/pages/wrangler-integration/
+  // Configuração Cloudflare Workers para o tabackvitrine
+  // Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+  //
+  // IMPORTANTE: Este projeto usa @opennextjs/cloudflare que é
+  // projetado para Workers (não Pages). Use `wrangler deploy`.
   // ============================================================
 
   "name": "tabackvitrine-api",
   "compatibility_flags": ["nodejs_compat"],
   "compatibility_date": "2025-04-17",
 
-  // --- Cloudflare Pages ---
-  // Diretório de assets estáticos (upload automático no Pages deploy)
-  // O _worker.js nesse diretório é o entry point do Worker (SSR + API)
-  "pages_build_output_dir": ".open-next/assets",
+  // Entry point do Worker (gerado pelo OpenNext)
+  "main": ".open-next/worker.js",
 
-  // Variáveis de ambiente (NÃO colocar secrets aqui - usar wrangler pages secret)
+  // Assets estáticos (HTML, CSS, JS, imagens)
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  // Variáveis de ambiente (NÃO colocar secrets aqui - usar wrangler secret)
   "vars": {
     "CORS_ALLOWED_ORIGINS": "*"
   },
