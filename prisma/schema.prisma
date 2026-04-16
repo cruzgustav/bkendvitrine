@@ -1,0 +1,531 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  password      String
+  name          String?
+  phone         String?
+  avatar        String?
+  role          UserRole       @default(USER)
+  emailVerified DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  payments      Payment[]
+  store         Store?
+  subscriptions Subscription[]
+
+  @@map("users")
+}
+
+model Store {
+  id                      String              @id @default(cuid())
+  userId                  String              @unique
+  name                    String
+  slug                    String              @unique
+  description             String?
+  logo                    String?
+  banner                  String?
+  email                   String?
+  phone                   String?
+  whatsapp                String?
+  instagram               String?
+  facebook                String?
+  twitter                 String?
+  tiktok                  String?
+  website                 String?
+  address                 String?
+  city                    String?
+  state                   String?
+  zipCode                 String?
+  country                 String              @default("Brasil")
+  currency                String              @default("BRL")
+  timezone                String              @default("America/Sao_Paulo")
+  infinityPayClientId     String?
+  infinityPayClientSecret String?
+  isActive                Boolean             @default(false)
+  isVerified              Boolean             @default(false)
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+  categories              Category[]
+  coupons                 Coupon[]
+  customers               Customer[]
+  orders                  Order[]
+  products                Product[]
+  collections             Collection[]        // Adicionado: Relação com Coleções
+  analytics               StoreAnalytics[]
+  customization           StoreCustomization?
+  settings                StoreSetting?
+  user                    User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("stores")
+}
+
+model Plan {
+  id            String         @id @default(cuid())
+  name          String
+  slug          String         @unique
+  description   String?
+  priceMonthly  Float
+  priceYearly   Float
+  maxProducts   Int            @default(10)
+  maxCategories Int            @default(5)
+  maxOrders     Int            @default(100)
+  maxStorageMb  Int            @default(100)
+  customDomain  Boolean        @default(false)
+  analytics     Boolean        @default(false)
+  priority      Int            @default(0)
+  features      String?
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  userId             String
+  planId             String
+  status             SubscriptionStatus @default(PENDING)
+  billingCycle       BillingCycle       @default(MONTHLY)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelledAt        DateTime?
+  cancelAtPeriodEnd  Boolean            @default(false)
+  trialStart         DateTime?
+  trialEnd           DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  payments           Payment[]
+  plan               Plan               @relation(fields: [planId], references: [id])
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  storeId     String
+  name        String
+  slug        String
+  description String?
+  image       String?
+  color       String?
+  icon        String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  store       Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products    Product[]
+
+  @@unique([storeId, slug])
+  @@map("categories")
+}
+
+// NOVO MODELO: Collection (Para Banners e Campanhas)
+model Collection {
+  id          String    @id @default(cuid())
+  storeId     String
+  name        String
+  slug        String
+  description String?
+  image       String?   // Imagem que será usada no Banner
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  store       Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products    Product[] // Relação Muitos-para-Muitos implícita com Produtos
+
+  @@unique([storeId, slug])
+  @@map("collections")
+}
+
+model Product {
+  id                String           @id @default(cuid())
+  storeId           String
+  categoryId        String?
+  sku               String?
+  name              String
+  slug              String
+  description       String?
+  shortDescription  String?
+  price             Float
+  comparePrice      Float?
+  costPrice         Float?
+  quantity          Int              @default(0)
+  lowStockThreshold Int              @default(5)
+  weight            Float?
+  width             Float?
+  height            Float?
+  length            Float?
+  brand             String?
+  model             String?
+  barcode           String?
+  tags              String?
+  metadata          String?
+  status            ProductStatus    @default(DRAFT)
+  isFeatured        Boolean          @default(false)
+  isNew             Boolean          @default(false)
+  isDigital         Boolean          @default(false)
+  digitalFile       String?
+  seoTitle          String?
+  seoDescription    String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  orderItems        OrderItem[]
+  images            ProductImage[]
+  reviews           ProductReview[]
+  variants          ProductVariant[]
+  collections       Collection[]     // Adicionado: Produto pode estar em várias coleções
+  category          Category?        @relation(fields: [categoryId], references: [id])
+  store             Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, slug])
+  @@map("products")
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  url       String
+  alt       String?
+  sortOrder Int      @default(0)
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_images")
+}
+
+model ProductVariant {
+  id        String      @id @default(cuid())
+  productId String
+  name      String
+  sku       String?
+  price     Float?
+  quantity  Int         @default(0)
+  options   String
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  orderItems OrderItem[]
+  product   Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_variants")
+}
+
+model Order {
+  id               String        @id @default(cuid())
+  storeId          String
+  customerId       String?
+  orderNumber      String        @unique
+  status           OrderStatus   @default(PENDING)
+  paymentStatus    PaymentStatus @default(PENDING)
+  paymentMethod    String?
+  subtotal         Float
+  discount         Float         @default(0)
+  shipping         Float         @default(0)
+  tax              Float         @default(0)
+  total            Float
+  customerName     String?
+  customerEmail    String?
+  customerPhone    String?
+  customerDocument String?
+  shippingAddress  String?
+  shippingCity     String?
+  shippingState    String?
+  shippingZipCode  String?
+  shippingCountry  String?
+  billingAddress   String?
+  billingCity      String?
+  billingState     String?
+  billingZipCode   String?
+  billingCountry   String?
+  notes            String?
+  internalNotes    String?
+  trackingNumber   String?
+  shippingCarrier  String?
+  shippedAt        DateTime?
+  deliveredAt      DateTime?
+  cancelledAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  items            OrderItem[]
+  customer         Customer?     @relation(fields: [customerId], references: [id])
+  store            Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  payments         Payment[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String          @id @default(cuid())
+  orderId     String
+  productId   String?
+  variantId   String?
+  productName String
+  variantName String?
+  quantity    Int
+  price       Float
+  total       Float
+  createdAt   DateTime        @default(now())
+  variant     ProductVariant? @relation(fields: [variantId], references: [id])
+  product     Product?        @relation(fields: [productId], references: [id])
+  order       Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_items")
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  storeId     String
+  email       String
+  name        String?
+  document    String?  
+  phone       String?
+  company     String?
+  notes       String?
+  totalOrders Int      @default(0)
+  totalSpent  Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  store       Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  orders      Order[]
+
+  @@unique([storeId, email])
+  @@map("customers")
+}
+
+model Payment {
+  id              String         @id @default(cuid())
+  userId          String?
+  orderId         String?
+  subscriptionId  String?
+  infinityPayId   String?        @unique
+  paymentIntentId String?
+  amount          Float
+  currency        String         @default("BRL")
+  status          PaymentStatus  @default(PENDING)
+  method          PaymentMethod
+  cardBrand       String?
+  cardLast4       String?
+  installments    Int            @default(1)
+  pixQrCode       String?
+  pixCode         String?
+  pixExpiresAt    DateTime?
+  boletoUrl       String?
+  boletoBarcode   String?
+  boletoExpiresAt DateTime?
+  paidAt          DateTime?
+  failedAt        DateTime?
+  refundedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  errorCode       String?
+  errorMessage    String?
+  subscription    Subscription?  @relation(fields: [subscriptionId], references: [id])
+  order           Order?         @relation(fields: [orderId], references: [id])
+  user            User?          @relation(fields: [userId], references: [id])
+
+  @@map("payments")
+}
+
+model Coupon {
+  id          String     @id @default(cuid())
+  storeId     String
+  code        String
+  description String?
+  type        CouponType
+  value       Float
+  minPurchase Float?
+  maxDiscount Float?
+  usageLimit  Int?
+  usageCount  Int        @default(0)
+  perCustomer Int?
+  startDate   DateTime?
+  endDate     DateTime?
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  store       Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, code])
+  @@map("coupons")
+}
+
+model StoreCustomization {
+  id               String   @id @default(cuid())
+  storeId          String   @unique
+  primaryColor     String   @default("#000000")
+  secondaryColor   String   @default("#666666")
+  accentColor      String   @default("#FF6B6B")
+  backgroundColor  String   @default("#FFFFFF")
+  textColor        String   @default("#333333")
+  headingFont      String   @default("Inter")
+  bodyFont         String   @default("Inter")
+  layoutStyle      String   @default("modern")
+  productCardStyle String   @default("card")
+  productsPerPage  Int      @default(12)
+  showBanner       Boolean  @default(true)
+  bannerTitle      String?
+  bannerSubtitle   String?
+  showFeatured     Boolean  @default(true)
+  showNewArrivals  Boolean  @default(true)
+  showCategories   Boolean  @default(true)
+  customCss        String?
+  customJs         String?
+  showReviews      Boolean  @default(true)
+  showSalesCount   Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  store            Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@map("store_customizations")
+}
+
+model StoreSetting {
+  id                 String   @id @default(cuid())
+  storeId            String   @unique
+  businessHours      String?
+  emailNotifications Boolean  @default(true)
+  smsNotifications   Boolean  @default(false)
+  orderConfirmation  Boolean  @default(true)
+  orderShipped       Boolean  @default(true)
+  orderDelivered     Boolean  @default(true)
+  freeShippingMin    Float?
+  defaultShipping    Float    @default(0)
+  taxEnabled         Boolean  @default(false)
+  taxRate            Float    @default(0)
+  taxIncluded        Boolean  @default(true)
+  requireLogin       Boolean  @default(false)
+  guestCheckout      Boolean  @default(true)
+  minOrderAmount     Float?
+  acceptCreditCard   Boolean  @default(true)
+  acceptPix          Boolean  @default(true)
+  acceptBoleto       Boolean  @default(true)
+  termsUrl           String?
+  privacyUrl         String?
+  refundPolicy       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  store              Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@map("store_settings")
+}
+
+model StoreAnalytics {
+  id              String   @id @default(cuid())
+  storeId         String
+  date            DateTime
+  visitors        Int      @default(0)
+  pageViews       Int      @default(0)
+  orders          Int      @default(0)
+  revenue         Float    @default(0)
+  topProducts     String?
+  topCategories   String?
+  directTraffic   Int      @default(0)
+  organicTraffic  Int      @default(0)
+  socialTraffic   Int      @default(0)
+  referralTraffic Int      @default(0)
+  createdAt       DateTime @default(now())
+  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, date])
+  @@map("store_analytics")
+}
+
+model ProductReview {
+  id           String   @id @default(cuid())
+  productId    String
+  customerId   String?
+  rating       Int
+  title        String?
+  comment      String?
+  isVerified   Boolean  @default(false)
+  isApproved   Boolean  @default(false)
+  helpfulCount Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_reviews")
+}
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+  TRIAL
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  OUT_OF_STOCK
+  DISCONTINUED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  DEBIT_CARD
+  PIX
+  BOLETO
+  BANK_TRANSFER
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED
+}
