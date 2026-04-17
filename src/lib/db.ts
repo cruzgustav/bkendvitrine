@@ -1,16 +1,12 @@
 /**
  * Database access layer using Neon serverless driver directly.
  *
- * WHY NOT PRISMA?
- * Prisma Client internally calls `fs.readdir` to discover its query engine binary.
- * Cloudflare Workers has no filesystem → `[unenv] fs.readdir is not implemented yet!`.
- * The `/edge` import doesn't support driver adapters either.
- * So we bypass Prisma entirely and use raw SQL via the Neon HTTP driver.
+ * Prisma creates columns with EXACT field names from schema.prisma.
+ * Since fields are camelCase (createdAt, userId, etc.), the DB columns
+ * are also camelCase — NOT snake_case. Only TABLE names use @@map()
+ * to map to snake_case (e.g., User → users).
  *
- * WHY NOT sql.unsafe()?
- * On Cloudflare Workers, `sql.unsafe(query, params)` returns a descriptor object
- * like {"sql":"SELECT ..."} instead of executing the query. The primary API
- * (tagged template literals) works correctly.
+ * Therefore we do NOT convert column names between camelCase/snake_case.
  */
 import { neon } from '@neondatabase/serverless'
 
@@ -59,10 +55,9 @@ function sqlToTemplateArgs(query: string, params: any[]): any[] {
   let currentString = parts[0]
   for (let i = 1; i < parts.length; i += 2) {
     const paramIndex = parseInt(parts[i], 10)
-    const nextText = parts[i + 1] || ''
     strings.push(currentString)
     orderedParams.push(params[paramIndex - 1])
-    currentString = nextText
+    currentString = parts[i + 1] || ''
   }
   strings.push(currentString)
   const templateStrings = strings as any as TemplateStringsArray
@@ -83,7 +78,7 @@ async function safeQuery(query: string, params: any[] = []): Promise<any[]> {
   }
 }
 
-// ── Test connection (for diagnostics) ───────────────────────────────────
+// ── Test connection ─────────────────────────────────────────────────────
 export async function testConnection(): Promise<{ ok: boolean; details: Record<string, any> }> {
   const details: Record<string, any> = {
     dbUrlSet: !!process.env.DATABASE_URL,
@@ -102,7 +97,7 @@ export async function testConnection(): Promise<{ ok: boolean; details: Record<s
   }
 }
 
-// ── Table mapping (model name → SQL table name) ────────────────────────
+// ── Table mapping (model name → SQL table name via @@map) ──────────────
 const TABLE_MAP: Record<string, string> = {
   user: 'users',
   store: 'stores',
@@ -125,100 +120,76 @@ const TABLE_MAP: Record<string, string> = {
   systemSetting: 'system_settings',
 }
 
-// ── Primary key column for each table ───────────────────────────────────
-const PK_MAP: Record<string, string> = {
-  users: 'id',
-  stores: 'id',
-  products: 'id',
-  orders: 'id',
-  categories: 'id',
-  customers: 'id',
-  payments: 'id',
-  coupons: 'id',
-  collections: 'id',
-  subscriptions: 'id',
-  plans: 'id',
-  store_settings: 'id',
-  store_customizations: 'id',
-  store_analytics: 'id',
-  product_images: 'id',
-  product_variants: 'id',
-  product_reviews: 'id',
-  order_items: 'id',
-  system_settings: 'id',
-}
+// ── Tables that have createdAt / updatedAt columns ──────────────────────
+const TIMESTAMP_TABLES = new Set([
+  'users', 'stores', 'products', 'orders', 'categories', 'customers',
+  'payments', 'coupons', 'collections', 'subscriptions', 'plans',
+  'store_settings', 'store_customizations', 'store_analytics',
+  'product_images', 'product_variants', 'product_reviews',
+  'order_items', 'system_settings',
+])
 
-// ── Unique constraints (for findUnique on non-PK fields) ────────────────
-const UNIQUE_MAP: Record<string, Record<string, string>> = {
-  users: { email: 'email' },
-  stores: { userId: 'user_id', slug: 'slug' },
-  plans: { slug: 'slug' },
-  categories: { storeId_slug: 'store_id, slug' },
-  products: { storeId_slug: 'store_id, slug' },
-  coupons: { storeId_code: 'store_id, code' },
-  customers: { storeId_email: 'store_id, email' },
-  collections: { storeId_slug: 'store_id, slug' },
-  store_settings: { storeId: 'store_id' },
-  store_customizations: { storeId: 'store_id' },
-  store_analytics: { storeId_date: 'store_id, date' },
-  system_settings: { key: 'key' },
-}
-
-// ── Default values for columns (replaces Prisma @default()) ─────────────
+// ── Default values (column names are camelCase — matching Prisma fields) ─
 const DEFAULTS_MAP: Record<string, Record<string, any>> = {
   users: { role: 'USER' },
-  stores: { country: 'Brasil', currency: 'BRL', timezone: 'America/Sao_Paulo', is_active: false, is_verified: false },
-  products: { quantity: 0, low_stock_threshold: 5, status: 'DRAFT', is_featured: false, is_new: false, is_digital: false },
-  orders: { status: 'PENDING', payment_status: 'PENDING', discount: 0, shipping: 0, tax: 0 },
-  categories: { sort_order: 0, is_active: true },
-  collections: { is_active: true },
-  coupons: { usage_count: 0, is_active: true },
-  customers: { total_orders: 0, total_spent: 0 },
+  stores: { country: 'Brasil', currency: 'BRL', timezone: 'America/Sao_Paulo', isActive: false, isVerified: false },
+  products: { quantity: 0, lowStockThreshold: 5, status: 'DRAFT', isFeatured: false, isNew: false, isDigital: false },
+  orders: { status: 'PENDING', paymentStatus: 'PENDING', discount: 0, shipping: 0, tax: 0 },
+  categories: { sortOrder: 0, isActive: true },
+  collections: { isActive: true },
+  coupons: { usageCount: 0, isActive: true },
+  customers: { totalOrders: 0, totalSpent: 0 },
   payments: { currency: 'BRL', status: 'PENDING', installments: 1 },
-  subscriptions: { status: 'PENDING', billing_cycle: 'MONTHLY', cancel_at_period_end: false },
+  subscriptions: { status: 'PENDING', billingCycle: 'MONTHLY', cancelAtPeriodEnd: false },
   store_settings: {
-    email_notifications: true, sms_notifications: false, order_confirmation: true,
-    order_shipped: true, order_delivered: true, default_shipping: 0,
-    tax_enabled: false, tax_rate: 0, tax_included: true, require_login: false,
-    guest_checkout: true, accept_credit_card: true, accept_pix: true, accept_boleto: true,
+    emailNotifications: true, smsNotifications: false, orderConfirmation: true,
+    orderShipped: true, orderDelivered: true, defaultShipping: 0,
+    taxEnabled: false, taxRate: 0, taxIncluded: true, requireLogin: false,
+    guestCheckout: true, acceptCreditCard: true, acceptPix: true, acceptBoleto: true,
   },
   store_customizations: {
-    primary_color: '#000000', secondary_color: '#666666', accent_color: '#FF6B6B',
-    background_color: '#FFFFFF', text_color: '#333333', heading_font: 'Inter',
-    body_font: 'Inter', layout_style: 'modern', product_card_style: 'card',
-    products_per_page: 12, show_banner: true, show_featured: true,
-    show_new_arrivals: true, show_categories: true, show_reviews: true,
-    show_sales_count: false,
+    primaryColor: '#000000', secondaryColor: '#666666', accentColor: '#FF6B6B',
+    backgroundColor: '#FFFFFF', textColor: '#333333', headingFont: 'Inter',
+    bodyFont: 'Inter', layoutStyle: 'modern', productCardStyle: 'card',
+    productsPerPage: 12, showBanner: true, showFeatured: true,
+    showNewArrivals: true, showCategories: true, showReviews: true,
+    showSalesCount: false,
   },
-  product_images: { sort_order: 0, is_primary: false },
+  product_images: { sortOrder: 0, isPrimary: false },
   product_variants: { quantity: 0 },
-  product_reviews: { is_verified: false, is_approved: false, helpful_count: 0 },
-  store_analytics: { visitors: 0, page_views: 0, orders: 0, revenue: 0, direct_traffic: 0, organic_traffic: 0, social_traffic: 0, referral_traffic: 0 },
+  product_reviews: { isVerified: false, isApproved: false, helpfulCount: 0 },
+  store_analytics: { visitors: 0, pageViews: 0, orders: 0, revenue: 0, directTraffic: 0, organicTraffic: 0, socialTraffic: 0, referralTraffic: 0 },
 }
 
-// ── Column mapping (camelCase ↔ snake_case) ─────────────────────────────
-function camelToSnake(str: string): string {
-  return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
-}
+// ── Apply defaults + timestamps for INSERTs ─────────────────────────────
+function applyDefaults(data: Record<string, any>, table: string): Record<string, any> {
+  const result = { ...data }
 
-function objToSnake(obj: Record<string, any>): Record<string, any> {
-  const result: Record<string, any> = {}
-  for (const [key, value] of Object.entries(obj)) {
-    result[camelToSnake(key)] = value
+  // Table-specific defaults
+  const defaults = DEFAULTS_MAP[table]
+  if (defaults) {
+    for (const [key, defaultVal] of Object.entries(defaults)) {
+      if (!(key in result) || result[key] === undefined) {
+        result[key] = defaultVal
+      }
+    }
   }
+
+  // Timestamps (replaces Prisma @default(now()) and @updatedAt)
+  if (TIMESTAMP_TABLES.has(table)) {
+    const now = new Date().toISOString()
+    if (!('createdAt' in result) || result.createdAt === undefined) {
+      result.createdAt = now
+    }
+    if (!('updatedAt' in result) || result.updatedAt === undefined) {
+      result.updatedAt = now
+    }
+  }
+
   return result
 }
 
-function rowToCamel(row: Record<string, any>): Record<string, any> {
-  const result: Record<string, any> = {}
-  for (const [key, value] of Object.entries(row)) {
-    const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
-    result[camelKey] = value
-  }
-  return result
-}
-
-// ── WHERE clause builder (supports OR, NOT, operators) ─────────────────
+// ── WHERE clause builder (column names stay camelCase!) ─────────────────
 function buildWhere(where: Record<string, any>, startIndex = 1): { sql: string; params: any[] } {
   const conditions: string[] = []
   const params: any[] = []
@@ -226,7 +197,6 @@ function buildWhere(where: Record<string, any>, startIndex = 1): { sql: string; 
 
   for (const [key, value] of Object.entries(where)) {
     if (key === 'OR') {
-      // OR: array of conditions
       const orConditions: string[] = []
       for (const orClause of value as any[]) {
         const { sql: orSql, params: orParams } = buildWhere(orClause, idx)
@@ -249,7 +219,8 @@ function buildWhere(where: Record<string, any>, startIndex = 1): { sql: string; 
       continue
     }
 
-    const col = camelToSnake(key)
+    // Column name: use as-is (camelCase, matching Prisma field names)
+    const col = `"${key}"`
     if (value === null) {
       conditions.push(`${col} IS NULL`)
     } else if (typeof value === 'object' && value !== null) {
@@ -293,94 +264,94 @@ function buildWhere(where: Record<string, any>, startIndex = 1): { sql: string; 
 }
 
 // ── ORDER BY builder ────────────────────────────────────────────────────
-function buildOrderBy(orderBy: Record<string, string> | Record<string, string>[], table?: string): string {
+function buildOrderBy(orderBy: Record<string, string> | Record<string, string>[]): string {
   if (Array.isArray(orderBy)) {
     return orderBy.map(o => {
       const [key, dir] = Object.entries(o)[0]
-      return `${camelToSnake(key)} ${dir === 'asc' ? 'ASC' : 'DESC'}`
+      return `"${key}" ${dir === 'asc' ? 'ASC' : 'DESC'}`
     }).join(', ')
   }
   const [key, dir] = Object.entries(orderBy)[0]
-  return `${camelToSnake(key)} ${dir === 'asc' ? 'ASC' : 'DESC'}`
+  return `"${key}" ${dir === 'asc' ? 'ASC' : 'DESC'}`
 }
 
-// ── Include resolver ────────────────────────────────────────────────────
+// ── Relations ───────────────────────────────────────────────────────────
 const RELATIONS: Record<string, Record<string, { table: string; fk: string; type: 'one' | 'many'; reverseFk?: string }>> = {
   users: {
-    store: { table: 'stores', fk: 'user_id', type: 'one' },
+    store: { table: 'stores', fk: 'userId', type: 'one' },
   },
   stores: {
-    user: { table: 'users', fk: 'id', type: 'one', reverseFk: 'user_id' },
-    categories: { table: 'categories', fk: 'store_id', type: 'many' },
-    products: { table: 'products', fk: 'store_id', type: 'many' },
-    orders: { table: 'orders', fk: 'store_id', type: 'many' },
-    customers: { table: 'customers', fk: 'store_id', type: 'many' },
-    coupons: { table: 'coupons', fk: 'store_id', type: 'many' },
-    collections: { table: 'collections', fk: 'store_id', type: 'many' },
-    payments: { table: 'payments', fk: 'store_id', type: 'many' },
-    subscriptions: { table: 'subscriptions', fk: 'user_id', type: 'many' },
-    customization: { table: 'store_customizations', fk: 'store_id', type: 'one' },
-    settings: { table: 'store_settings', fk: 'store_id', type: 'one' },
-    analytics: { table: 'store_analytics', fk: 'store_id', type: 'many' },
+    user: { table: 'users', fk: 'id', type: 'one', reverseFk: 'userId' },
+    categories: { table: 'categories', fk: 'storeId', type: 'many' },
+    products: { table: 'products', fk: 'storeId', type: 'many' },
+    orders: { table: 'orders', fk: 'storeId', type: 'many' },
+    customers: { table: 'customers', fk: 'storeId', type: 'many' },
+    coupons: { table: 'coupons', fk: 'storeId', type: 'many' },
+    collections: { table: 'collections', fk: 'storeId', type: 'many' },
+    payments: { table: 'payments', fk: 'storeId', type: 'many' },
+    subscriptions: { table: 'subscriptions', fk: 'userId', type: 'many' },
+    customization: { table: 'store_customizations', fk: 'storeId', type: 'one' },
+    settings: { table: 'store_settings', fk: 'storeId', type: 'one' },
+    analytics: { table: 'store_analytics', fk: 'storeId', type: 'many' },
   },
   products: {
-    store: { table: 'stores', fk: 'store_id', type: 'one' },
-    category: { table: 'categories', fk: 'id', type: 'one', reverseFk: 'category_id' },
-    images: { table: 'product_images', fk: 'product_id', type: 'many' },
-    variants: { table: 'product_variants', fk: 'product_id', type: 'many' },
-    reviews: { table: 'product_reviews', fk: 'product_id', type: 'many' },
-    collections: { table: 'collections', fk: 'store_id', type: 'many' },
-    orderItems: { table: 'order_items', fk: 'product_id', type: 'many' },
+    store: { table: 'stores', fk: 'storeId', type: 'one' },
+    category: { table: 'categories', fk: 'id', type: 'one', reverseFk: 'categoryId' },
+    images: { table: 'product_images', fk: 'productId', type: 'many' },
+    variants: { table: 'product_variants', fk: 'productId', type: 'many' },
+    reviews: { table: 'product_reviews', fk: 'productId', type: 'many' },
+    collections: { table: 'collections', fk: 'storeId', type: 'many' },
+    orderItems: { table: 'order_items', fk: 'productId', type: 'many' },
   },
   orders: {
-    store: { table: 'stores', fk: 'store_id', type: 'one' },
-    customer: { table: 'customers', fk: 'id', type: 'one', reverseFk: 'customer_id' },
-    items: { table: 'order_items', fk: 'order_id', type: 'many' },
-    payments: { table: 'payments', fk: 'order_id', type: 'many' },
+    store: { table: 'stores', fk: 'storeId', type: 'one' },
+    customer: { table: 'customers', fk: 'id', type: 'one', reverseFk: 'customerId' },
+    items: { table: 'order_items', fk: 'orderId', type: 'many' },
+    payments: { table: 'payments', fk: 'orderId', type: 'many' },
   },
   order_items: {
-    product: { table: 'products', fk: 'id', type: 'one', reverseFk: 'product_id' },
-    variant: { table: 'product_variants', fk: 'id', type: 'one', reverseFk: 'variant_id' },
-    order: { table: 'orders', fk: 'order_id', type: 'one' },
+    product: { table: 'products', fk: 'id', type: 'one', reverseFk: 'productId' },
+    variant: { table: 'product_variants', fk: 'id', type: 'one', reverseFk: 'variantId' },
+    order: { table: 'orders', fk: 'orderId', type: 'one' },
   },
   payments: {
-    order: { table: 'orders', fk: 'id', type: 'one', reverseFk: 'order_id' },
-    subscription: { table: 'subscriptions', fk: 'id', type: 'one', reverseFk: 'subscription_id' },
-    user: { table: 'users', fk: 'id', type: 'one', reverseFk: 'user_id' },
+    order: { table: 'orders', fk: 'id', type: 'one', reverseFk: 'orderId' },
+    subscription: { table: 'subscriptions', fk: 'id', type: 'one', reverseFk: 'subscriptionId' },
+    user: { table: 'users', fk: 'id', type: 'one', reverseFk: 'userId' },
     store: { table: 'stores', fk: 'id', type: 'one' },
   },
   subscriptions: {
-    plan: { table: 'plans', fk: 'plan_id', type: 'one' },
-    user: { table: 'users', fk: 'user_id', type: 'one' },
-    payments: { table: 'payments', fk: 'subscription_id', type: 'many' },
+    plan: { table: 'plans', fk: 'planId', type: 'one' },
+    user: { table: 'users', fk: 'userId', type: 'one' },
+    payments: { table: 'payments', fk: 'subscriptionId', type: 'many' },
   },
   customers: {
-    store: { table: 'stores', fk: 'store_id', type: 'one' },
-    orders: { table: 'orders', fk: 'customer_id', type: 'many' },
+    store: { table: 'stores', fk: 'storeId', type: 'one' },
+    orders: { table: 'orders', fk: 'customerId', type: 'many' },
   },
   categories: {
-    store: { table: 'stores', fk: 'store_id', type: 'one' },
-    products: { table: 'products', fk: 'category_id', type: 'many' },
+    store: { table: 'stores', fk: 'storeId', type: 'one' },
+    products: { table: 'products', fk: 'categoryId', type: 'many' },
   },
   coupons: {
-    store: { table: 'stores', fk: 'store_id', type: 'one' },
+    store: { table: 'stores', fk: 'storeId', type: 'one' },
   },
   collections: {
-    store: { table: 'stores', fk: 'store_id', type: 'one' },
-    products: { table: 'products', fk: 'store_id', type: 'many' },
+    store: { table: 'stores', fk: 'storeId', type: 'one' },
+    products: { table: 'products', fk: 'storeId', type: 'many' },
   },
   product_images: {
-    product: { table: 'products', fk: 'product_id', type: 'one' },
+    product: { table: 'products', fk: 'productId', type: 'one' },
   },
   product_variants: {
-    product: { table: 'products', fk: 'product_id', type: 'one' },
+    product: { table: 'products', fk: 'productId', type: 'one' },
   },
   plans: {
-    subscriptions: { table: 'subscriptions', fk: 'plan_id', type: 'many' },
+    subscriptions: { table: 'subscriptions', fk: 'planId', type: 'many' },
   },
 }
 
-// Resolve includes (handles relations, _count, orderBy in includes)
+// ── Include resolver ────────────────────────────────────────────────────
 async function resolveIncludes(
   mainRows: Record<string, any>[],
   table: string,
@@ -391,7 +362,6 @@ async function resolveIncludes(
   const tableRelations = RELATIONS[table]
 
   for (const [relName, relInclude] of Object.entries(include)) {
-    // Handle _count
     if (relName === '_count') {
       await resolveCount(mainRows, table, relInclude)
       continue
@@ -401,17 +371,11 @@ async function resolveIncludes(
     const rel = tableRelations[relName]
     const relTable = rel.table
 
-    // Extract orderBy from include spec if present
     let orderBy: any = undefined
     let nestedInclude: any = undefined
     if (typeof relInclude === 'object' && relInclude !== null) {
-      if (relInclude.orderBy) {
-        orderBy = relInclude.orderBy
-      }
-      if (relInclude.include) {
-        nestedInclude = relInclude.include
-      }
-      // If relInclude only has orderBy/include (no `true`), still fetch the relation
+      if (relInclude.orderBy) orderBy = relInclude.orderBy
+      if (relInclude.include) nestedInclude = relInclude.include
     }
 
     if (rel.type === 'one') {
@@ -419,13 +383,12 @@ async function resolveIncludes(
         const ids = [...new Set(mainRows.map(r => r.id))]
         let query = `SELECT * FROM "${relTable}" WHERE "${rel.reverseFk}" = ANY($1)`
         const queryParams: any[] = [ids]
-        if (orderBy) query += ` ORDER BY ${buildOrderBy(orderBy, relTable)}`
+        if (orderBy) query += ` ORDER BY ${buildOrderBy(orderBy)}`
         const relRows = await safeQuery(query, queryParams)
         const relMap = new Map<string, Record<string, any>>()
         for (const row of relRows) {
-          const camelRow = rowToCamel(row)
           const fkValue = (row as any)[rel.reverseFk!]
-          relMap.set(fkValue, camelRow)
+          relMap.set(fkValue, row)
         }
         for (const mainRow of mainRows) {
           mainRow[relName] = relMap.get(mainRow.id) || null
@@ -439,21 +402,21 @@ async function resolveIncludes(
         const relRows = await safeQuery(`SELECT * FROM "${relTable}" WHERE id = ANY($1)`, [fkValues])
         const relMap = new Map<string, Record<string, any>>()
         for (const row of relRows) {
-          const camelRow = rowToCamel(row)
-          relMap.set(row.id, camelRow)
+          relMap.set(row.id, row)
         }
         for (const mainRow of mainRows) {
           mainRow[relName] = relMap.get((mainRow as any)[rel.fk]) || null
         }
       }
-      // Nested includes on related rows
-      if (nestedInclude || (typeof relInclude === 'object' && relInclude !== null && !orderBy)) {
+      // Nested includes
+      if (typeof relInclude === 'object' && relInclude !== null) {
         const nestedRows = mainRows.map(r => r[relName]).filter(Boolean)
         if (nestedRows.length) {
-          // Use the include spec minus orderBy for nested resolution
           const nestedSpec = { ...relInclude }
           delete nestedSpec.orderBy
-          await resolveIncludes(nestedRows, relTable, nestedSpec)
+          if (Object.keys(nestedSpec).length > 0) {
+            await resolveIncludes(nestedRows, relTable, nestedSpec)
+          }
         }
       }
     } else {
@@ -461,25 +424,26 @@ async function resolveIncludes(
       const ids = [...new Set(mainRows.map(r => r.id))]
       let query = `SELECT * FROM "${relTable}" WHERE "${rel.fk}" = ANY($1)`
       const queryParams: any[] = [ids]
-      if (orderBy) query += ` ORDER BY ${buildOrderBy(orderBy, relTable)}`
+      if (orderBy) query += ` ORDER BY ${buildOrderBy(orderBy)}`
       const relRows = await safeQuery(query, queryParams)
       const relMap = new Map<string, Record<string, any>[]>()
       for (const row of relRows) {
-        const camelRow = rowToCamel(row)
         const fkValue = (row as any)[rel.fk]
         if (!relMap.has(fkValue)) relMap.set(fkValue, [])
-        relMap.get(fkValue)!.push(camelRow)
+        relMap.get(fkValue)!.push(row)
       }
       for (const mainRow of mainRows) {
         mainRow[relName] = relMap.get(mainRow.id) || []
       }
       // Nested includes
-      if (nestedInclude || (typeof relInclude === 'object' && relInclude !== null && !orderBy)) {
+      if (typeof relInclude === 'object' && relInclude !== null) {
         const allNestedRows = mainRows.flatMap(r => r[relName] || [])
         if (allNestedRows.length) {
           const nestedSpec = { ...relInclude }
           delete nestedSpec.orderBy
-          await resolveIncludes(allNestedRows, relTable, nestedSpec)
+          if (Object.keys(nestedSpec).length > 0) {
+            await resolveIncludes(allNestedRows, relTable, nestedSpec)
+          }
         }
       }
     }
@@ -497,7 +461,6 @@ async function resolveCount(
   if (!tableRelations) return
 
   if (countSpec === true) {
-    // Count all relations
     for (const [relName, rel] of Object.entries(tableRelations)) {
       if (rel.type !== 'many') continue
       const ids = [...new Set(mainRows.map(r => r.id))]
@@ -506,76 +469,30 @@ async function resolveCount(
         [ids]
       )
       const countMap = new Map<string, number>()
-      for (const row of rows) {
-        countMap.set((row as any).fk, (row as any).count)
-      }
+      for (const row of rows) { countMap.set((row as any).fk, (row as any).count) }
       for (const mainRow of mainRows) {
         if (!mainRow._count) mainRow._count = {}
         mainRow._count[relName] = countMap.get(mainRow.id) || 0
       }
     }
   } else if (typeof countSpec === 'object') {
-    // Count specific relations
     for (const [relName, shouldCount] of Object.entries(countSpec)) {
       if (!shouldCount) continue
       const rel = tableRelations[relName]
       if (!rel || rel.type !== 'many') continue
-
       const ids = [...new Set(mainRows.map(r => r.id))]
       const rows = await safeQuery(
         `SELECT "${rel.fk}" as fk, COUNT(*)::int as count FROM "${rel.table}" WHERE "${rel.fk}" = ANY($1) GROUP BY "${rel.fk}"`,
         [ids]
       )
       const countMap = new Map<string, number>()
-      for (const row of rows) {
-        countMap.set((row as any).fk, (row as any).count)
-      }
+      for (const row of rows) { countMap.set((row as any).fk, (row as any).count) }
       for (const mainRow of mainRows) {
         if (!mainRow._count) mainRow._count = {}
         mainRow._count[relName] = countMap.get(mainRow.id) || 0
       }
     }
   }
-}
-
-// ── Tables that have created_at / updated_at columns ────────────────────
-// Almost all tables in the Prisma schema have these timestamps.
-// Prisma sets them at the application level (@default(now()), @updatedAt),
-// so we must provide them in raw SQL INSERTs.
-const TIMESTAMP_TABLES = new Set([
-  'users', 'stores', 'products', 'orders', 'categories', 'customers',
-  'payments', 'coupons', 'collections', 'subscriptions', 'plans',
-  'store_settings', 'store_customizations', 'store_analytics',
-  'product_images', 'product_variants', 'product_reviews',
-  'order_items', 'system_settings',
-])
-
-// ── Apply defaults for missing columns ──────────────────────────────────
-function applyDefaults(snakeData: Record<string, any>, table: string): Record<string, any> {
-  const result = { ...snakeData }
-
-  // Apply table-specific defaults
-  const defaults = DEFAULTS_MAP[table]
-  if (defaults) {
-    for (const [key, defaultVal] of Object.entries(defaults)) {
-      if (!(key in result) || result[key] === undefined) {
-        result[key] = defaultVal
-      }
-    }
-  }
-
-  // Apply timestamps (replaces Prisma @default(now()) and @updatedAt)
-  if (TIMESTAMP_TABLES.has(table)) {
-    const now = new Date().toISOString()
-    if (!('created_at' in result) || result.created_at === undefined) {
-      result.created_at = now
-    }
-    if (!('updated_at' in result) || result.updated_at === undefined) {
-      result.updated_at = now
-    }
-  }
-
-  return result
 }
 
 // ── Repository (provides Prisma-like API per model) ─────────────────────
@@ -588,10 +505,8 @@ function createRepo(model: string) {
       const { sql: whereSql, params } = buildWhere(args.where)
       const rows = await safeQuery(`SELECT * FROM "${table}" WHERE ${whereSql} LIMIT 1`, params)
       if (!rows.length) return null
-      const row = rowToCamel(rows[0] as Record<string, any>)
-      if (args.include) {
-        await resolveIncludes([row], table, args.include)
-      }
+      const row = rows[0] as Record<string, any>
+      if (args.include) await resolveIncludes([row], table, args.include)
       return row
     },
 
@@ -603,16 +518,12 @@ function createRepo(model: string) {
         parts.push(`WHERE ${whereSql}`)
         params.push(...whereParams)
       }
-      if (args.orderBy) {
-        parts.push(`ORDER BY ${buildOrderBy(args.orderBy, table)}`)
-      }
+      if (args.orderBy) parts.push(`ORDER BY ${buildOrderBy(args.orderBy)}`)
       parts.push('LIMIT 1')
       const rows = await safeQuery(parts.join(' '), params)
       if (!rows.length) return null
-      const row = rowToCamel(rows[0] as Record<string, any>)
-      if (args.include) {
-        await resolveIncludes([row], table, args.include)
-      }
+      const row = rows[0] as Record<string, any>
+      if (args.include) await resolveIncludes([row], table, args.include)
       return row
     },
 
@@ -620,66 +531,46 @@ function createRepo(model: string) {
       const parts: string[] = [`SELECT * FROM "${table}"`]
       const params: any[] = []
       let paramIdx = 1
-
       if (args.where && Object.keys(args.where).length > 0) {
         const { sql: whereSql, params: whereParams } = buildWhere(args.where, paramIdx)
         parts.push(`WHERE ${whereSql}`)
         params.push(...whereParams)
         paramIdx += whereParams.length
       }
-      if (args.orderBy) {
-        parts.push(`ORDER BY ${buildOrderBy(args.orderBy, table)}`)
-      }
-      if (args.take !== undefined) {
-        parts.push(`LIMIT $${paramIdx++}`)
-        params.push(args.take)
-      }
-      if (args.skip !== undefined) {
-        parts.push(`OFFSET $${paramIdx++}`)
-        params.push(args.skip)
-      }
-
+      if (args.orderBy) parts.push(`ORDER BY ${buildOrderBy(args.orderBy)}`)
+      if (args.take !== undefined) { parts.push(`LIMIT $${paramIdx++}`); params.push(args.take) }
+      if (args.skip !== undefined) { parts.push(`OFFSET $${paramIdx++}`); params.push(args.skip) }
       const rows = await safeQuery(parts.join(' '), params)
-      const result = rows.map((r: any) => rowToCamel(r as Record<string, any>))
-      if (args.include) {
-        await resolveIncludes(result, table, args.include)
-      }
+      const result = rows as Record<string, any>[]
+      if (args.include) await resolveIncludes(result, table, args.include)
       return result
     },
 
     create: async (args: { data: Record<string, any>; include?: Record<string, any> }) => {
-      const data = objToSnake(args.data)
-
       // Handle nested creates (e.g., store: { create: { ... } })
       const nestedCreates: Array<{ relName: string; table: string; fk: string; data: Record<string, any> }> = []
       const cleanData: Record<string, any> = {}
 
-      for (const [key, value] of Object.entries(data)) {
+      for (const [key, value] of Object.entries(args.data)) {
         if (value && typeof value === 'object' && !Array.isArray(value) && value.create) {
-          const camelRelName = Object.keys(args.data).find(k => camelToSnake(k) === key)
-          if (camelRelName) {
-            const relInfo = RELATIONS[table]?.[camelRelName]
-            if (relInfo) {
-              const nestedData = objToSnake(value.create)
-              nestedCreates.push({
-                relName: camelRelName,
-                table: relInfo.table,
-                fk: relInfo.reverseFk || relInfo.fk,
-                data: nestedData,
-              })
-            }
+          const relInfo = RELATIONS[table]?.[key]
+          if (relInfo) {
+            nestedCreates.push({
+              relName: key,
+              table: relInfo.table,
+              fk: relInfo.reverseFk || relInfo.fk,
+              data: value.create,
+            })
           }
         } else {
           cleanData[key] = value
         }
       }
 
-      // Generate ID if not provided (replaces @default(cuid()))
-      if (!cleanData.id) {
-        cleanData.id = cuid()
-      }
+      // Generate ID if not provided
+      if (!cleanData.id) cleanData.id = cuid()
 
-      // Apply column defaults
+      // Apply defaults + timestamps
       const dataWithDefaults = applyDefaults(cleanData, table)
 
       const cols = Object.keys(dataWithDefaults)
@@ -691,19 +582,14 @@ function createRepo(model: string) {
         vals
       )
       if (!rows.length) throw new Error(`Failed to create ${model}: no rows returned`)
-      const row = rowToCamel(rows[0] as Record<string, any>)
+      const row = rows[0] as Record<string, any>
 
       // Execute nested creates
       for (const nested of nestedCreates) {
-        const nestedDataWithFk = { ...nested.data }
-        // Generate ID for nested record too
-        if (!nestedDataWithFk.id) {
-          nestedDataWithFk.id = cuid()
-        }
-        // Set the foreign key to the parent's ID
-        nestedDataWithFk[nested.fk] = row.id
-        // Apply defaults for nested table
-        const nestedWithDefaults = applyDefaults(nestedDataWithFk, nested.table)
+        const nestedData: Record<string, any> = { ...nested.data }
+        if (!nestedData.id) nestedData.id = cuid()
+        nestedData[nested.fk] = row.id
+        const nestedWithDefaults = applyDefaults(nestedData, nested.table)
 
         const nestedCols = Object.keys(nestedWithDefaults)
         const nestedVals = Object.values(nestedWithDefaults)
@@ -713,25 +599,21 @@ function createRepo(model: string) {
           nestedVals
         )
         if (nestedRows.length) {
-          row[nested.relName] = rowToCamel(nestedRows[0] as Record<string, any>)
+          row[nested.relName] = nestedRows[0] as Record<string, any>
         }
       }
 
-      if (args.include) {
-        await resolveIncludes([row], table, args.include)
-      }
+      if (args.include) await resolveIncludes([row], table, args.include)
       return row
     },
 
     update: async (args: { where: Record<string, any>; data: Record<string, any>; include?: Record<string, any> }) => {
-      const data = objToSnake(args.data)
       const { sql: whereSql, params: whereParams } = buildWhere(args.where)
-
       const setParts: string[] = []
       const setParams: any[] = []
       let paramIdx = 1
 
-      for (const [key, value] of Object.entries(data)) {
+      for (const [key, value] of Object.entries(args.data)) {
         if (value && typeof value === 'object' && !Array.isArray(value)) {
           if ('decrement' in value) {
             setParts.push(`"${key}" = "${key}" - $${paramIdx++}`)
@@ -740,7 +622,6 @@ function createRepo(model: string) {
             setParts.push(`"${key}" = "${key}" + $${paramIdx++}`)
             setParams.push(value.increment)
           } else if ('push' in value) {
-            // JSON array push
             setParts.push(`"${key}" = COALESCE("${key}"::jsonb, '[]'::jsonb) || $${paramIdx++}::jsonb`)
             setParams.push(JSON.stringify(value.push))
           }
@@ -750,9 +631,9 @@ function createRepo(model: string) {
         }
       }
 
-      // Always update updated_at (replaces Prisma @updatedAt)
-      if (TIMESTAMP_TABLES.has(table) && !data.updated_at) {
-        setParts.push(`"updated_at" = NOW()`)
+      // Always update updatedAt (replaces Prisma @updatedAt)
+      if (TIMESTAMP_TABLES.has(table)) {
+        setParts.push(`"updatedAt" = NOW()`)
       }
 
       const allParams = [...setParams, ...whereParams]
@@ -761,10 +642,8 @@ function createRepo(model: string) {
         allParams
       )
       if (!rows.length) return null
-      const row = rowToCamel(rows[0] as Record<string, any>)
-      if (args.include) {
-        await resolveIncludes([row], table, args.include)
-      }
+      const row = rows[0] as Record<string, any>
+      if (args.include) await resolveIncludes([row], table, args.include)
       return row
     },
 
@@ -772,7 +651,7 @@ function createRepo(model: string) {
       const { sql: whereSql, params } = buildWhere(args.where)
       const rows = await safeQuery(`DELETE FROM "${table}" WHERE ${whereSql} RETURNING *`, params)
       if (!rows.length) return null
-      return rowToCamel(rows[0] as Record<string, any>)
+      return rows[0] as Record<string, any>
     },
 
     deleteMany: async (args: { where: Record<string, any> }) => {
@@ -782,19 +661,15 @@ function createRepo(model: string) {
     },
 
     updateMany: async (args: { where: Record<string, any>; data: Record<string, any> }) => {
-      const data = objToSnake(args.data)
       const { sql: whereSql, params: whereParams } = buildWhere(args.where)
       const setParts: string[] = []
       const setParams: any[] = []
       let paramIdx = 1
-      for (const [key, value] of Object.entries(data)) {
+      for (const [key, value] of Object.entries(args.data)) {
         setParts.push(`"${key}" = $${paramIdx++}`)
         setParams.push(value)
       }
-      // Always update updated_at
-      if (TIMESTAMP_TABLES.has(table) && !data.updated_at) {
-        setParts.push(`"updated_at" = NOW()`)
-      }
+      if (TIMESTAMP_TABLES.has(table)) setParts.push(`"updatedAt" = NOW()`)
       const allParams = [...setParams, ...whereParams]
       const rows = await safeQuery(
         `UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`,
@@ -818,12 +693,12 @@ function createRepo(model: string) {
     aggregate: async (args: { where?: Record<string, any>; _max?: Record<string, boolean>; _sum?: Record<string, boolean>; _avg?: Record<string, boolean>; _min?: Record<string, boolean>; _count?: boolean | Record<string, boolean> }) => {
       const selects: string[] = []
       const params: any[] = []
-      if (args._max) { for (const col of Object.keys(args._max)) selects.push(`MAX("${camelToSnake(col)}") as "max_${camelToSnake(col)}"`) }
-      if (args._sum) { for (const col of Object.keys(args._sum)) selects.push(`SUM("${camelToSnake(col)}") as "sum_${camelToSnake(col)}"`) }
-      if (args._min) { for (const col of Object.keys(args._min)) selects.push(`MIN("${camelToSnake(col)}") as "min_${camelToSnake(col)}"`) }
-      if (args._avg) { for (const col of Object.keys(args._avg)) selects.push(`AVG("${camelToSnake(col)}") as "avg_${camelToSnake(col)}"`) }
-      if (args._count === true) { selects.push('COUNT(*)::int as "_count_all"') }
-      else if (typeof args._count === 'object') { for (const col of Object.keys(args._count)) selects.push(`COUNT("${camelToSnake(col)}")::int as "_count_${camelToSnake(col)}"`) }
+      if (args._max) for (const col of Object.keys(args._max)) selects.push(`MAX("${col}") as "max_${col}"`)
+      if (args._sum) for (const col of Object.keys(args._sum)) selects.push(`SUM("${col}") as "sum_${col}"`)
+      if (args._min) for (const col of Object.keys(args._min)) selects.push(`MIN("${col}") as "min_${col}"`)
+      if (args._avg) for (const col of Object.keys(args._avg)) selects.push(`AVG("${col}") as "avg_${col}"`)
+      if (args._count === true) selects.push('COUNT(*)::int as "_count_all"')
+      else if (typeof args._count === 'object') for (const col of Object.keys(args._count)) selects.push(`COUNT("${col}")::int as "_count_${col}"`)
       const parts: string[] = [`SELECT ${selects.join(', ')} FROM "${table}"`]
       if (args.where && Object.keys(args.where).length > 0) {
         const { sql: whereSql, params: whereParams } = buildWhere(args.where)
@@ -834,12 +709,11 @@ function createRepo(model: string) {
       const row = rows[0] as Record<string, any>
       const result: Record<string, any> = {}
       for (const [key, value] of Object.entries(row)) {
-        const camelKey = key.replace(/_([a-z])/g, (_, l) => l.toUpperCase())
-        if (key.startsWith('max_')) { if (!result._max) result._max = {}; result._max[camelKey.replace('max_', '')] = value }
-        else if (key.startsWith('sum_')) { if (!result._sum) result._sum = {}; result._sum[camelKey.replace('sum_', '')] = value }
-        else if (key.startsWith('min_')) { if (!result._min) result._min = {}; result._min[camelKey.replace('min_', '')] = value }
-        else if (key.startsWith('avg_')) { if (!result._avg) result._avg = {}; result._avg[camelKey.replace('avg_', '')] = value }
-        else if (key.startsWith('_count_')) { if (!result._count) result._count = {} as any; (result._count as any)[camelKey.replace('_count_', '')] = value }
+        if (key.startsWith('max_')) { if (!result._max) result._max = {}; result._max[key.replace('max_', '')] = value }
+        else if (key.startsWith('sum_')) { if (!result._sum) result._sum = {}; result._sum[key.replace('sum_', '')] = value }
+        else if (key.startsWith('min_')) { if (!result._min) result._min = {}; result._min[key.replace('min_', '')] = value }
+        else if (key.startsWith('avg_')) { if (!result._avg) result._avg = {}; result._avg[key.replace('avg_', '')] = value }
+        else if (key.startsWith('_count_')) { if (!result._count) result._count = {} as any; (result._count as any)[key.replace('_count_', '')] = value }
         else if (key === '_count_all') { result._count = value }
       }
       return result
@@ -849,24 +723,21 @@ function createRepo(model: string) {
       const { sql: whereSql, params: whereParams } = buildWhere(args.where)
       const existing = await safeQuery(`SELECT * FROM "${table}" WHERE ${whereSql} LIMIT 1`, whereParams)
       if (existing.length > 0) {
-        const data = objToSnake(args.update)
         const setParts: string[] = []
         const setParams: any[] = []
         let paramIdx = 1
-        for (const [key, value] of Object.entries(data)) {
+        for (const [key, value] of Object.entries(args.update)) {
           setParts.push(`"${key}" = $${paramIdx++}`)
           setParams.push(value)
         }
-        if (TIMESTAMP_TABLES.has(table) && !data.updated_at) {
-          setParts.push(`"updated_at" = NOW()`)
-        }
+        if (TIMESTAMP_TABLES.has(table)) setParts.push(`"updatedAt" = NOW()`)
         const allParams = [...setParams, ...whereParams]
         const rows = await safeQuery(`UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`, allParams)
-        const row = rowToCamel(rows[0] as Record<string, any>)
+        const row = rows[0] as Record<string, any>
         if (args.include) await resolveIncludes([row], table, args.include)
         return row
       } else {
-        const data = objToSnake(args.create)
+        const data = { ...args.create }
         if (!data.id) data.id = cuid()
         const dataWithDefaults = applyDefaults(data, table)
         const cols = Object.keys(dataWithDefaults)
@@ -876,7 +747,7 @@ function createRepo(model: string) {
           `INSERT INTO "${table}" (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`,
           vals
         )
-        const row = rowToCamel(rows[0] as Record<string, any>)
+        const row = rows[0] as Record<string, any>
         if (args.include) await resolveIncludes([row], table, args.include)
         return row
       }
@@ -885,7 +756,7 @@ function createRepo(model: string) {
     createMany: async (args: { data: Record<string, any>[] }) => {
       let count = 0
       for (const item of args.data) {
-        const data = objToSnake(item)
+        const data = { ...item }
         if (!data.id) data.id = cuid()
         const dataWithDefaults = applyDefaults(data, table)
         const cols = Object.keys(dataWithDefaults)
