@@ -394,9 +394,11 @@ async function resolveIncludes(
 
     let orderBy: any = undefined
     let nestedInclude: any = undefined
+    let whereFilter: any = undefined
     if (typeof relInclude === 'object' && relInclude !== null) {
       if (relInclude.orderBy) orderBy = relInclude.orderBy
       if (relInclude.include) nestedInclude = relInclude.include
+      if (relInclude.where) whereFilter = relInclude.where
     }
 
     if (rel.type === 'one') {
@@ -405,8 +407,15 @@ async function resolveIncludes(
         // e.g. users.store → stores.userId points to users.id
         const ids = [...new Set(mainRows.map(r => r.id))]
         let query = `SELECT * FROM "${relTable}" WHERE "${rel.remoteFk}" = ANY($1)`
+        const queryParams: any[] = [ids]
+        // Apply where filter if present (e.g. customization: { where: { ... } })
+        if (whereFilter) {
+          const { sql: wSql, params: wParams } = buildWhere(whereFilter, queryParams.length + 1)
+          query += ` AND (${wSql})`
+          queryParams.push(...wParams)
+        }
         if (orderBy) query += ` ORDER BY ${buildOrderBy(orderBy)}`
-        const relRows = await safeQuery(query, [ids])
+        const relRows = await safeQuery(query, queryParams)
         const relMap = new Map<string, Record<string, any>>()
         for (const row of relRows) {
           relMap.set((row as any)[rel.remoteFk!], row)
@@ -424,8 +433,14 @@ async function resolveIncludes(
           continue
         }
         let query = `SELECT * FROM "${relTable}" WHERE "id" = ANY($1)`
+        const queryParams: any[] = [fkValues]
+        if (whereFilter) {
+          const { sql: wSql, params: wParams } = buildWhere(whereFilter, queryParams.length + 1)
+          query += ` AND (${wSql})`
+          queryParams.push(...wParams)
+        }
         if (orderBy) query += ` ORDER BY ${buildOrderBy(orderBy)}`
-        const relRows = await safeQuery(query, [fkValues])
+        const relRows = await safeQuery(query, queryParams)
         const relMap = new Map<string, Record<string, any>>()
         for (const row of relRows) {
           relMap.set(row.id, row)
@@ -434,15 +449,11 @@ async function resolveIncludes(
           mainRow[relName] = relMap.get((mainRow as any)[localFk]) || null
         }
       }
-      // Nested includes
-      if (typeof relInclude === 'object' && relInclude !== null) {
+      // Nested includes — use nestedInclude (extracted from relInclude.include) not the whole relInclude
+      if (nestedInclude && typeof nestedInclude === 'object') {
         const nestedRows = mainRows.map(r => r[relName]).filter(Boolean)
         if (nestedRows.length) {
-          const nestedSpec = { ...relInclude }
-          delete nestedSpec.orderBy
-          if (Object.keys(nestedSpec).length > 0) {
-            await resolveIncludes(nestedRows, relTable, nestedSpec)
-          }
+          await resolveIncludes(nestedRows, relTable, nestedInclude)
         }
       }
     } else {
@@ -450,6 +461,12 @@ async function resolveIncludes(
       const ids = [...new Set(mainRows.map(r => r.id))]
       let query = `SELECT * FROM "${relTable}" WHERE "${rel.fk}" = ANY($1)`
       const queryParams: any[] = [ids]
+      // Apply where filter if present (e.g. products: { where: { status: 'ACTIVE' } })
+      if (whereFilter) {
+        const { sql: wSql, params: wParams } = buildWhere(whereFilter, queryParams.length + 1)
+        query += ` AND (${wSql})`
+        queryParams.push(...wParams)
+      }
       if (orderBy) query += ` ORDER BY ${buildOrderBy(orderBy)}`
       const relRows = await safeQuery(query, queryParams)
       const relMap = new Map<string, Record<string, any>[]>()
@@ -461,15 +478,11 @@ async function resolveIncludes(
       for (const mainRow of mainRows) {
         mainRow[relName] = relMap.get(mainRow.id) || []
       }
-      // Nested includes
-      if (typeof relInclude === 'object' && relInclude !== null) {
+      // Nested includes — use nestedInclude (extracted from relInclude.include) not the whole relInclude
+      if (nestedInclude && typeof nestedInclude === 'object') {
         const allNestedRows = mainRows.flatMap(r => r[relName] || [])
         if (allNestedRows.length) {
-          const nestedSpec = { ...relInclude }
-          delete nestedSpec.orderBy
-          if (Object.keys(nestedSpec).length > 0) {
-            await resolveIncludes(allNestedRows, relTable, nestedSpec)
-          }
+          await resolveIncludes(allNestedRows, relTable, nestedInclude)
         }
       }
     }
