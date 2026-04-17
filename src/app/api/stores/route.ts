@@ -52,7 +52,8 @@ export async function GET(request: Request) {
     
   } catch (error) {
     console.error('Get store error:', error)
-    return apiError('Erro ao buscar loja', 500)
+    const errMsg = error instanceof Error ? error.message : String(error)
+    return apiError(`Erro ao buscar loja: ${errMsg}`, 500)
   }
 }
 

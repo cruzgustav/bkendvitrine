@@ -118,7 +118,8 @@ export async function GET(request: Request) {
     
   } catch (error) {
     console.error('Get products error:', error)
-    return apiError('Erro ao buscar produtos', 500)
+    const errMsg = error instanceof Error ? error.message : String(error)
+    return apiError(`Erro ao buscar produtos: ${errMsg}`, 500)
   }
 }
 

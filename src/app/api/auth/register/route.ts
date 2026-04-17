@@ -80,6 +80,7 @@ export async function POST(request: Request) {
     }
     
     console.error('Register error:', error)
-    return apiError('Erro ao criar usuário', 500)
+    const errMsg = error instanceof Error ? error.message : String(error)
+    return apiError(`Erro ao criar usuário: ${errMsg}`, 500)
   }
 }
