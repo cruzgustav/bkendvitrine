@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client/edge'
+import { PrismaClient } from '@prisma/client'
 import { PrismaNeon } from '@prisma/adapter-neon'
 import { neon } from '@neondatabase/serverless'
 
@@ -14,7 +14,7 @@ function createPrismaClient() {
   }
 
   // Neon serverless driver: usa HTTP em vez de TCP
-  // Funciona perfeitamente no Cloudflare Workers / Edge Runtime
+  // O adapter PrismaNeon faz o Prisma funcionar em Edge Runtime sem precisar de /edge
   const sql = neon(connectionString)
   const adapter = new PrismaNeon(sql)
 
@@ -25,7 +25,6 @@ function createPrismaClient() {
 }
 
 // Lazy initialization: só cria o PrismaClient quando for acessado
-// Isso evita erros durante o build do Next.js quando DATABASE_URL não está disponível
 let _db: PrismaClient | undefined = undefined
 
 export function getDb(): PrismaClient {
@@ -37,7 +36,6 @@ export function getDb(): PrismaClient {
 }
 
 // Mantém compatibilidade com o import `db` existente usando Proxy
-// Quando qualquer método do db for chamado, ele inicializa lazy
 export const db = new Proxy({} as PrismaClient, {
   get(_target, prop: string | symbol) {
     const client = getDb()

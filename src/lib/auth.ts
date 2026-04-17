@@ -1,6 +1,6 @@
 import { db } from './db'
 import { NextRequest } from 'next/server'
-import { User } from '@prisma/client/edge'
+import { User } from '@prisma/client'
 
 // Simple password hashing using Web Crypto API
 export async function hashPassword(password: string): Promise<string> {
