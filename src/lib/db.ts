@@ -394,7 +394,7 @@ async function resolveIncludes(
           mainRow[relName] = relMap.get(mainRow.id) || null
         }
       } else {
-        const fkValues = [...new Set(mainRows.map(r => (r as any)[rel.fk])).filter(Boolean)]
+        const fkValues = [...new Set(mainRows.map(r => (r as any)[rel.fk]))].filter(Boolean)
         if (!fkValues.length) {
           for (const mainRow of mainRows) mainRow[relName] = null
           continue
