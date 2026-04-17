@@ -6,60 +6,62 @@
  * IMPORTANTE: No Cloudflare Pages Dashboard:
  *   - Build command: node scripts/build-pages.js
  *   - Build output directory: .open-next
- *   - Deploy command: DEIXAR VAZIO (Pages deploya automaticamente)
+ *   - Deploy command: DEIXAR VAZIO
  */
 
 const { execSync, existsSync, renameSync, readdirSync, statSync, cpSync } = require('fs');
-const { join } = require('path');
+const { join, resolve } = require('path');
 
-const ROOT_DIR = join(__dirname, '..');
+const ROOT_DIR = resolve(__dirname, '..');
 const OPEN_NEXT_DIR = join(ROOT_DIR, '.open-next');
+const NODE_MODULES_BIN = join(ROOT_DIR, 'node_modules', '.bin');
+
+// Garantir que node_modules/.bin está no PATH
+const currentPath = process.env.PATH || '';
+if (!currentPath.includes(NODE_MODULES_BIN)) {
+  process.env.PATH = `${NODE_MODULES_BIN}:${currentPath}`;
+}
 
 function run(cmd, label, required = true) {
   console.log(`\n🔧 ${label}...`);
   console.log(`   > ${cmd}`);
+  console.log(`   PATH includes .bin: ${process.env.PATH.includes(NODE_MODULES_BIN)}`);
   try {
-    execSync(cmd, { stdio: 'inherit', cwd: ROOT_DIR, timeout: 300000 });
+    execSync(cmd, {
+      stdio: 'inherit',
+      cwd: ROOT_DIR,
+      timeout: 300000,
+      env: { ...process.env }
+    });
     console.log(`   ✅ ${label} concluído`);
     return true;
   } catch (error) {
     if (required) {
       console.error(`   ❌ ${label} falhou`);
       console.error(`   Exit code: ${error.status}`);
-      if (error.stderr) console.error(`   stderr: ${error.stderr.toString().slice(0, 1000)}`);
-      if (error.stdout) console.error(`   stdout: ${error.stdout.toString().slice(0, 1000)}`);
+      if (error.stderr) console.error(`   stderr: ${error.stderr.toString().slice(0, 2000)}`);
+      if (error.stdout) console.error(`   stdout: ${error.stdout.toString().slice(0, 2000)}`);
       process.exit(1);
     } else {
-      console.warn(`   ⚠️  ${label} falhou (opcional, continuando...)`);
+      console.warn(`   ⚠️  ${label} falhou (opcional)`);
       return false;
     }
   }
 }
 
 function ensurePrismaClient() {
-  // Verifica se o Prisma Client já foi gerado (pelo postinstall)
-  const prismaClientDir = join(ROOT_DIR, 'node_modules', '.prisma', 'client');
-  const prismaClientFile = join(prismaClientDir, 'index.js');
-
+  const prismaClientFile = join(ROOT_DIR, 'node_modules', '.prisma', 'client', 'index.js');
   if (existsSync(prismaClientFile)) {
-    console.log('\n   ✅ Prisma Client já gerado (via postinstall)');
+    console.log('\n   ✅ Prisma Client já gerado');
     return;
   }
-
-  // Se não foi gerado, tentar gerar manualmente
   console.log('\n   ⚠️  Prisma Client não encontrado, gerando...');
-  const prismaBin = join(ROOT_DIR, 'node_modules', '.bin', 'prisma');
-  const cmd = existsSync(prismaBin)
-    ? `${prismaBin} generate --schema=./prisma/schema.prisma`
-    : 'npx prisma generate --schema=./prisma/schema.prisma';
-
-  run(cmd, 'Gerando Prisma Client');
+  run('prisma generate --schema=./prisma/schema.prisma', 'Gerando Prisma Client');
 }
 
 function restructureForPages() {
   console.log('\n🔧 Reestruturando output para Cloudflare Pages...');
 
-  // 1. Renomear worker.js → _worker.js
   const workerJs = join(OPEN_NEXT_DIR, 'worker.js');
   const underscoreWorkerJs = join(OPEN_NEXT_DIR, '_worker.js');
 
@@ -68,29 +70,23 @@ function restructureForPages() {
   } else if (existsSync(workerJs)) {
     console.log('   📝 Renomeando worker.js → _worker.js...');
     renameSync(workerJs, underscoreWorkerJs);
-
     const workerMap = join(OPEN_NEXT_DIR, 'worker.js.map');
     const underscoreWorkerMap = join(OPEN_NEXT_DIR, '_worker.js.map');
-    if (existsSync(workerMap)) {
-      renameSync(workerMap, underscoreWorkerMap);
-    }
+    if (existsSync(workerMap)) renameSync(workerMap, underscoreWorkerMap);
     console.log('   ✅ _worker.js criado');
   } else {
     console.warn('   ⚠️  worker.js não encontrado');
   }
 
-  // 2. Mover assets/ para a raiz do output
   const assetsDir = join(OPEN_NEXT_DIR, 'assets');
   if (existsSync(assetsDir)) {
-    console.log('   📁 Movendo assets para raiz do output...');
+    console.log('   📁 Movendo assets para raiz...');
     try {
       const assetItems = readdirSync(assetsDir);
       for (const item of assetItems) {
         const src = join(assetsDir, item);
         const dest = join(OPEN_NEXT_DIR, item);
-        if (!existsSync(dest)) {
-          cpSync(src, dest, { recursive: true });
-        }
+        if (!existsSync(dest)) cpSync(src, dest, { recursive: true });
       }
       console.log(`   ✅ ${assetItems.length} itens movidos`);
     } catch (e) {
@@ -101,12 +97,10 @@ function restructureForPages() {
 
 function validateOutput() {
   console.log('\n📁 Validando output...');
-
   if (!existsSync(OPEN_NEXT_DIR)) {
     console.error('   ❌ .open-next/ não encontrado!');
     process.exit(1);
   }
-
   const workerFile = join(OPEN_NEXT_DIR, '_worker.js');
   if (existsSync(workerFile)) {
     const stat = statSync(workerFile);
@@ -138,8 +132,13 @@ console.log('='.repeat(50));
 // Step 1: Garantir Prisma Client
 ensurePrismaClient();
 
-// Step 2: Build do OpenNext
-run('npx @opennextjs/cloudflare build', 'Build OpenNext');
+// Step 2: Build do OpenNext — usar o binário direto em vez de npx
+const opennextBin = join(NODE_MODULES_BIN, 'opennextjs-cloudflare');
+const buildCmd = existsSync(opennextBin)
+  ? `${opennextBin} build`
+  : 'npx @opennextjs/cloudflare build';
+
+run(buildCmd, 'Build OpenNext');
 
 // Step 3: Reestruturar para Pages
 restructureForPages();
