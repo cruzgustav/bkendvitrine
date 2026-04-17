@@ -13,7 +13,7 @@
     "db:reset": "prisma migrate reset",
     "backup": "bun run scripts/backup.ts",
     "seed": "bun run scripts/seed.ts",
-    "cf:build": "npx @opennextjs/cloudflare build && cp .open-next/worker.js .open-next/assets/_worker.js",
+    "cf:build": "npx @opennextjs/cloudflare build && cp .open-next/worker.js .open-next/_worker.js",
     "cf:preview": "npx @opennextjs/cloudflare build && npx wrangler pages dev",
     "cf:deploy": "npx @opennextjs/cloudflare build"
   },
