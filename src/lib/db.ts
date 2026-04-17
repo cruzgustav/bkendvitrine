@@ -548,11 +548,15 @@ function createRepo(model: string) {
 
     create: async (args: { data: Record<string, any>; include?: Record<string, any> }) => {
       // Handle nested creates (e.g., store: { create: { ... } })
-      const nestedCreates: Array<{ relName: string; table: string; fk: string; data: Record<string, any> }> = []
+      const nestedCreates: Array<{ relName: string; table: string; fk: string; data: Record<string, any> | any[] }> = []
       const cleanData: Record<string, any> = {}
 
       for (const [key, value] of Object.entries(args.data)) {
+        // Skip undefined values (e.g., images: undefined from product create)
+        if (value === undefined) continue
+
         if (value && typeof value === 'object' && !Array.isArray(value) && value.create) {
+          // Nested create: { images: { create: [...] } }
           const relInfo = RELATIONS[table]?.[key]
           if (relInfo) {
             nestedCreates.push({
@@ -573,8 +577,14 @@ function createRepo(model: string) {
       // Apply defaults + timestamps
       const dataWithDefaults = applyDefaults(cleanData, table)
 
-      const cols = Object.keys(dataWithDefaults)
-      const vals = Object.values(dataWithDefaults)
+      // Remove any remaining undefined values
+      const finalData: Record<string, any> = {}
+      for (const [key, value] of Object.entries(dataWithDefaults)) {
+        if (value !== undefined) finalData[key] = value
+      }
+
+      const cols = Object.keys(finalData)
+      const vals = Object.values(finalData)
       const placeholders = vals.map((_, i) => `$${i + 1}`)
 
       const rows = await safeQuery(
@@ -586,20 +596,29 @@ function createRepo(model: string) {
 
       // Execute nested creates
       for (const nested of nestedCreates) {
-        const nestedData: Record<string, any> = { ...nested.data }
-        if (!nestedData.id) nestedData.id = cuid()
-        nestedData[nested.fk] = row.id
-        const nestedWithDefaults = applyDefaults(nestedData, nested.table)
+        const items = Array.isArray(nested.data) ? nested.data : [nested.data]
+        const nestedResults: Record<string, any>[] = []
 
-        const nestedCols = Object.keys(nestedWithDefaults)
-        const nestedVals = Object.values(nestedWithDefaults)
-        const nestedPlaceholders = nestedVals.map((_, i) => `$${i + 1}`)
-        const nestedRows = await safeQuery(
-          `INSERT INTO "${nested.table}" (${nestedCols.map(c => `"${c}"`).join(', ')}) VALUES (${nestedPlaceholders.join(', ')}) RETURNING *`,
-          nestedVals
-        )
-        if (nestedRows.length) {
-          row[nested.relName] = nestedRows[0] as Record<string, any>
+        for (const item of items) {
+          const nestedData: Record<string, any> = { ...item }
+          if (!nestedData.id) nestedData.id = cuid()
+          nestedData[nested.fk] = row.id
+          const nestedWithDefaults = applyDefaults(nestedData, nested.table)
+
+          const nestedCols = Object.keys(nestedWithDefaults)
+          const nestedVals = Object.values(nestedWithDefaults)
+          const nestedPlaceholders = nestedVals.map((_, i) => `$${i + 1}`)
+          const nestedRows = await safeQuery(
+            `INSERT INTO "${nested.table}" (${nestedCols.map(c => `"${c}"`).join(', ')}) VALUES (${nestedPlaceholders.join(', ')}) RETURNING *`,
+            nestedVals
+          )
+          if (nestedRows.length) nestedResults.push(nestedRows[0] as Record<string, any>)
+        }
+
+        // Attach results: array for one-to-many, single object for one-to-one
+        const relInfo = RELATIONS[table]?.[nested.relName]
+        if (relInfo) {
+          row[nested.relName] = relInfo.type === 'many' ? nestedResults : (nestedResults[0] || null)
         }
       }
 
