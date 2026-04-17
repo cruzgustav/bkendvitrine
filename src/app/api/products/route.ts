@@ -209,6 +209,7 @@ export async function POST(request: Request) {
     }
     
     console.error('Create product error:', error)
-    return apiError('Erro ao criar produto', 500)
+    const errMsg = error instanceof Error ? error.message : String(error)
+    return apiError(`Erro ao criar produto: ${errMsg}`, 500)
   }
 }
