@@ -538,16 +538,43 @@ async function resolveCount(
   }
 }
 
+// ── Tables that have created_at / updated_at columns ────────────────────
+// Almost all tables in the Prisma schema have these timestamps.
+// Prisma sets them at the application level (@default(now()), @updatedAt),
+// so we must provide them in raw SQL INSERTs.
+const TIMESTAMP_TABLES = new Set([
+  'users', 'stores', 'products', 'orders', 'categories', 'customers',
+  'payments', 'coupons', 'collections', 'subscriptions', 'plans',
+  'store_settings', 'store_customizations', 'store_analytics',
+  'product_images', 'product_variants', 'product_reviews',
+  'order_items', 'system_settings',
+])
+
 // ── Apply defaults for missing columns ──────────────────────────────────
 function applyDefaults(snakeData: Record<string, any>, table: string): Record<string, any> {
-  const defaults = DEFAULTS_MAP[table]
-  if (!defaults) return snakeData
   const result = { ...snakeData }
-  for (const [key, defaultVal] of Object.entries(defaults)) {
-    if (!(key in result) || result[key] === undefined) {
-      result[key] = defaultVal
+
+  // Apply table-specific defaults
+  const defaults = DEFAULTS_MAP[table]
+  if (defaults) {
+    for (const [key, defaultVal] of Object.entries(defaults)) {
+      if (!(key in result) || result[key] === undefined) {
+        result[key] = defaultVal
+      }
     }
   }
+
+  // Apply timestamps (replaces Prisma @default(now()) and @updatedAt)
+  if (TIMESTAMP_TABLES.has(table)) {
+    const now = new Date().toISOString()
+    if (!('created_at' in result) || result.created_at === undefined) {
+      result.created_at = now
+    }
+    if (!('updated_at' in result) || result.updated_at === undefined) {
+      result.updated_at = now
+    }
+  }
+
   return result
 }
 
@@ -723,6 +750,11 @@ function createRepo(model: string) {
         }
       }
 
+      // Always update updated_at (replaces Prisma @updatedAt)
+      if (TIMESTAMP_TABLES.has(table) && !data.updated_at) {
+        setParts.push(`"updated_at" = NOW()`)
+      }
+
       const allParams = [...setParams, ...whereParams]
       const rows = await safeQuery(
         `UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`,
@@ -758,6 +790,10 @@ function createRepo(model: string) {
       for (const [key, value] of Object.entries(data)) {
         setParts.push(`"${key}" = $${paramIdx++}`)
         setParams.push(value)
+      }
+      // Always update updated_at
+      if (TIMESTAMP_TABLES.has(table) && !data.updated_at) {
+        setParts.push(`"updated_at" = NOW()`)
       }
       const allParams = [...setParams, ...whereParams]
       const rows = await safeQuery(
@@ -820,6 +856,9 @@ function createRepo(model: string) {
         for (const [key, value] of Object.entries(data)) {
           setParts.push(`"${key}" = $${paramIdx++}`)
           setParams.push(value)
+        }
+        if (TIMESTAMP_TABLES.has(table) && !data.updated_at) {
+          setParts.push(`"updated_at" = NOW()`)
         }
         const allParams = [...setParams, ...whereParams]
         const rows = await safeQuery(`UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`, allParams)
