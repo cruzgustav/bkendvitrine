@@ -3,144 +3,149 @@
 /**
  * Build script para deploy no Cloudflare Pages via Painel (Dashboard)
  *
- * Este script:
- * 1. Gera o Prisma Client
- * 2. Executa o build do OpenNext para Cloudflare
- * 3. Garante que _worker.js exista no output (necessário para Pages)
- * 4. Valida a estrutura de saída
- *
- * Uso: node scripts/build-pages.js
+ * IMPORTANTE: No Cloudflare Pages Dashboard:
+ *   - Build command: node scripts/build-pages.js
+ *   - Build output directory: .open-next
+ *   - Deploy command: DEIXAR VAZIO (Pages deploya automaticamente)
  */
 
-const { execSync, existsSync, renameSync, readdirSync, statSync } = require('fs');
+const { execSync, existsSync, renameSync, readdirSync, statSync, cpSync } = require('fs');
 const { join } = require('path');
 
 const ROOT_DIR = join(__dirname, '..');
 const OPEN_NEXT_DIR = join(ROOT_DIR, '.open-next');
 
-function run(cmd, label) {
+function run(cmd, label, required = true) {
   console.log(`\n🔧 ${label}...`);
   console.log(`   > ${cmd}`);
   try {
-    execSync(cmd, { stdio: 'inherit', cwd: ROOT_DIR });
+    execSync(cmd, { stdio: 'inherit', cwd: ROOT_DIR, timeout: 300000 });
     console.log(`   ✅ ${label} concluído`);
+    return true;
   } catch (error) {
-    console.error(`   ❌ ${label} falhou`);
-    process.exit(1);
+    if (required) {
+      console.error(`   ❌ ${label} falhou`);
+      console.error(`   Exit code: ${error.status}`);
+      if (error.stderr) console.error(`   stderr: ${error.stderr.toString().slice(0, 1000)}`);
+      if (error.stdout) console.error(`   stdout: ${error.stdout.toString().slice(0, 1000)}`);
+      process.exit(1);
+    } else {
+      console.warn(`   ⚠️  ${label} falhou (opcional, continuando...)`);
+      return false;
+    }
   }
 }
 
-function ensureWorkerJs() {
-  // Cloudflare Pages procura por _worker.js no diretório de saída
-  // OpenNext gera worker.js (formato Workers) — renomear para _worker.js (formato Pages)
+function ensurePrismaClient() {
+  // Verifica se o Prisma Client já foi gerado (pelo postinstall)
+  const prismaClientDir = join(ROOT_DIR, 'node_modules', '.prisma', 'client');
+  const prismaClientFile = join(prismaClientDir, 'index.js');
+
+  if (existsSync(prismaClientFile)) {
+    console.log('\n   ✅ Prisma Client já gerado (via postinstall)');
+    return;
+  }
+
+  // Se não foi gerado, tentar gerar manualmente
+  console.log('\n   ⚠️  Prisma Client não encontrado, gerando...');
+  const prismaBin = join(ROOT_DIR, 'node_modules', '.bin', 'prisma');
+  const cmd = existsSync(prismaBin)
+    ? `${prismaBin} generate --schema=./prisma/schema.prisma`
+    : 'npx prisma generate --schema=./prisma/schema.prisma';
+
+  run(cmd, 'Gerando Prisma Client');
+}
+
+function restructureForPages() {
+  console.log('\n🔧 Reestruturando output para Cloudflare Pages...');
+
+  // 1. Renomear worker.js → _worker.js
   const workerJs = join(OPEN_NEXT_DIR, 'worker.js');
   const underscoreWorkerJs = join(OPEN_NEXT_DIR, '_worker.js');
 
   if (existsSync(underscoreWorkerJs)) {
-    console.log('\n   ✅ _worker.js já existe — formato Pages correto');
-    return;
-  }
-
-  if (existsSync(workerJs)) {
-    console.log('\n   📝 Renomeando worker.js → _worker.js para compatibilidade com Pages...');
+    console.log('   ✅ _worker.js já existe');
+  } else if (existsSync(workerJs)) {
+    console.log('   📝 Renomeando worker.js → _worker.js...');
     renameSync(workerJs, underscoreWorkerJs);
 
-    // Também renomear o source map se existir
     const workerMap = join(OPEN_NEXT_DIR, 'worker.js.map');
     const underscoreWorkerMap = join(OPEN_NEXT_DIR, '_worker.js.map');
     if (existsSync(workerMap)) {
       renameSync(workerMap, underscoreWorkerMap);
-      console.log('   📝 worker.js.map → _worker.js.map');
     }
-
-    console.log('   ✅ _worker.js criado com sucesso');
+    console.log('   ✅ _worker.js criado');
   } else {
-    console.warn('\n   ⚠️  Nem worker.js nem _worker.js encontrado no output!');
-    console.warn('   O build pode ter falhado ou a estrutura mudou.');
+    console.warn('   ⚠️  worker.js não encontrado');
+  }
+
+  // 2. Mover assets/ para a raiz do output
+  const assetsDir = join(OPEN_NEXT_DIR, 'assets');
+  if (existsSync(assetsDir)) {
+    console.log('   📁 Movendo assets para raiz do output...');
+    try {
+      const assetItems = readdirSync(assetsDir);
+      for (const item of assetItems) {
+        const src = join(assetsDir, item);
+        const dest = join(OPEN_NEXT_DIR, item);
+        if (!existsSync(dest)) {
+          cpSync(src, dest, { recursive: true });
+        }
+      }
+      console.log(`   ✅ ${assetItems.length} itens movidos`);
+    } catch (e) {
+      console.warn(`   ⚠️  Erro: ${e.message}`);
+    }
   }
 }
 
 function validateOutput() {
-  console.log('\n📁 Validando estrutura do output...');
+  console.log('\n📁 Validando output...');
 
   if (!existsSync(OPEN_NEXT_DIR)) {
-    console.error('   ❌ Diretório .open-next/ não encontrado!');
+    console.error('   ❌ .open-next/ não encontrado!');
     process.exit(1);
   }
 
-  const requiredItems = ['_worker.js'];
-  const optionalItems = ['assets'];
-
-  let allGood = true;
-  for (const item of requiredItems) {
-    const path = join(OPEN_NEXT_DIR, item);
-    if (existsSync(path)) {
-      const stat = statSync(path);
-      const size = stat.size;
-      console.log(`   ✅ ${item} (${(size / 1024).toFixed(1)} KB)`);
-    } else {
-      console.error(`   ❌ ${item} NÃO ENCONTRADO — deploy vai falhar!`);
-      allGood = false;
-    }
-  }
-
-  for (const item of optionalItems) {
-    const path = join(OPEN_NEXT_DIR, item);
-    if (existsSync(path)) {
-      console.log(`   ✅ ${item}/ (presente)`);
-    } else {
-      console.warn(`   ⚠️  ${item}/ não encontrado (pode não ser necessário)`);
-    }
-  }
-
-  if (!allGood) {
-    console.error('\n❌ Validação falhou — corrija os erros acima antes do deploy.');
+  const workerFile = join(OPEN_NEXT_DIR, '_worker.js');
+  if (existsSync(workerFile)) {
+    const stat = statSync(workerFile);
+    console.log(`   ✅ _worker.js (${(stat.size / 1024).toFixed(1)} KB)`);
+  } else {
+    console.error('   ❌ _worker.js NÃO encontrado!');
     process.exit(1);
   }
 
-  // Listar conteúdo resumido
   console.log('\n📋 Conteúdo de .open-next/:');
   const items = readdirSync(OPEN_NEXT_DIR);
-  for (const item of items.slice(0, 20)) {
+  for (const item of items.slice(0, 25)) {
     const itemPath = join(OPEN_NEXT_DIR, item);
     const stat = statSync(itemPath);
     if (stat.isDirectory()) {
       const subItems = readdirSync(itemPath);
-      console.log(`   📁 ${item}/ (${subItems.length} arquivos)`);
+      console.log(`   📁 ${item}/ (${subItems.length} itens)`);
     } else {
       console.log(`   📄 ${item} (${(stat.size / 1024).toFixed(1)} KB)`);
     }
-  }
-  if (items.length > 20) {
-    console.log(`   ... e mais ${items.length - 20} itens`);
   }
 }
 
 // ====== MAIN ======
 
-console.log('🚀 Build para Cloudflare Pages (deploy via Painel)');
+console.log('🚀 Build para Cloudflare Pages');
 console.log('='.repeat(50));
 
-// Step 1: Gerar Prisma Client
-run('npx prisma generate', 'Gerando Prisma Client');
+// Step 1: Garantir Prisma Client
+ensurePrismaClient();
 
-// Step 2: Build do OpenNext para Cloudflare
-run('npx @opennextjs/cloudflare build', 'Build OpenNext para Cloudflare');
+// Step 2: Build do OpenNext
+run('npx @opennextjs/cloudflare build', 'Build OpenNext');
 
-// Step 3: Garantir _worker.js para Pages
-ensureWorkerJs();
+// Step 3: Reestruturar para Pages
+restructureForPages();
 
-// Step 4: Validar output
+// Step 4: Validar
 validateOutput();
 
 console.log('\n' + '='.repeat(50));
-console.log('🎉 Build concluído com sucesso!');
-console.log('📂 Diretório de saída: .open-next/');
-console.log('');
-console.log('Para deploy via Painel do Cloudflare:');
-console.log('  1. Vá em Workers & Pages > Create > Pages > Connect to Git');
-console.log('  2. Conecte o repositório');
-console.log('  3. Build command: npm install && node scripts/build-pages.js');
-console.log('  4. Output directory: .open-next');
-console.log('  5. Em Settings > Functions, adicione flag: nodejs_compat');
-console.log('');
+console.log('🎉 Build concluído!');
