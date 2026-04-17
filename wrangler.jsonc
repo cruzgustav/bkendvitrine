@@ -1,23 +1,8 @@
 {
-  // ============================================================
-  // Configuração Cloudflare Workers para o tabackvitrine
-  // Deploy: npm run cf:deploy
-  //
-  // O banco usa @neondatabase/serverless (HTTP/WebSocket)
-  // Configure DATABASE_URL e JWT_SECRET como secrets no Dashboard
-  // ============================================================
-
   "name": "bkendvitrine",
   "compatibility_flags": ["nodejs_compat"],
   "compatibility_date": "2025-04-17",
-
-  "main": ".open-next/worker.js",
-
-  "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
-  },
-
+  "pages_build_output_dir": ".open-next/assets",
   "vars": {
     "CORS_ALLOWED_ORIGINS": "*"
   }
