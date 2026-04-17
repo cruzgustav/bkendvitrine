@@ -120,13 +120,22 @@ const TABLE_MAP: Record<string, string> = {
   systemSetting: 'system_settings',
 }
 
-// ── Tables that have createdAt / updatedAt columns ──────────────────────
-const TIMESTAMP_TABLES = new Set([
+// ── Tables that have createdAt column ───────────────────────────────────
+const CREATED_AT_TABLES = new Set([
   'users', 'stores', 'products', 'orders', 'categories', 'customers',
   'payments', 'coupons', 'collections', 'subscriptions', 'plans',
   'store_settings', 'store_customizations', 'store_analytics',
   'product_images', 'product_variants', 'product_reviews',
   'order_items', 'system_settings',
+])
+
+// ── Tables that ALSO have updatedAt column ───────────────────────────────
+// (Prisma @updatedAt — product_images, order_items, store_analytics only have createdAt)
+const UPDATED_AT_TABLES = new Set([
+  'users', 'stores', 'products', 'orders', 'categories', 'customers',
+  'payments', 'coupons', 'collections', 'subscriptions', 'plans',
+  'store_settings', 'store_customizations', 'product_variants',
+  'product_reviews', 'system_settings',
 ])
 
 // ── Default values (column names are camelCase — matching Prisma fields) ─
@@ -176,11 +185,13 @@ function applyDefaults(data: Record<string, any>, table: string): Record<string,
   }
 
   // Timestamps (replaces Prisma @default(now()) and @updatedAt)
-  if (TIMESTAMP_TABLES.has(table)) {
-    const now = new Date().toISOString()
+  const now = new Date().toISOString()
+  if (CREATED_AT_TABLES.has(table)) {
     if (!('createdAt' in result) || result.createdAt === undefined) {
       result.createdAt = now
     }
+  }
+  if (UPDATED_AT_TABLES.has(table)) {
     if (!('updatedAt' in result) || result.updatedAt === undefined) {
       result.updatedAt = now
     }
@@ -668,7 +679,7 @@ function createRepo(model: string) {
       }
 
       // Always update updatedAt (replaces Prisma @updatedAt)
-      if (TIMESTAMP_TABLES.has(table)) {
+      if (UPDATED_AT_TABLES.has(table)) {
         setParts.push(`"updatedAt" = NOW()`)
       }
 
@@ -705,7 +716,7 @@ function createRepo(model: string) {
         setParts.push(`"${key}" = $${paramIdx++}`)
         setParams.push(value)
       }
-      if (TIMESTAMP_TABLES.has(table)) setParts.push(`"updatedAt" = NOW()`)
+      if (UPDATED_AT_TABLES.has(table)) setParts.push(`"updatedAt" = NOW()`)
       const allParams = [...setParams, ...whereParams]
       const rows = await safeQuery(
         `UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`,
@@ -766,7 +777,7 @@ function createRepo(model: string) {
           setParts.push(`"${key}" = $${paramIdx++}`)
           setParams.push(value)
         }
-        if (TIMESTAMP_TABLES.has(table)) setParts.push(`"updatedAt" = NOW()`)
+        if (UPDATED_AT_TABLES.has(table)) setParts.push(`"updatedAt" = NOW()`)
         const allParams = [...setParams, ...whereParams]
         const rows = await safeQuery(`UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`, allParams)
         const row = rows[0] as Record<string, any>
