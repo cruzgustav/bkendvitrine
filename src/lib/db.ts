@@ -13,10 +13,9 @@
  *   etc.
  */
 import { neon } from '@neondatabase/serverless'
-import type { TaggedTemplateLiteralInvocation } from '@neondatabase/serverless'
 
 // ── Connection ──────────────────────────────────────────────────────────
-let _sql: TaggedTemplateLiteralInvocation<true, true>
+let _sql: any
 
 function getSql() {
   if (!_sql) {
@@ -24,9 +23,106 @@ function getSql() {
     if (!connectionString) {
       throw new Error('DATABASE_URL is not set. Configure it in Cloudflare Dashboard or .env file.')
     }
-    _sql = neon(connectionString)
+    // Use fetchConnection for edge runtimes (Cloudflare Workers)
+    // This ensures the HTTP-based SQL API is used instead of WebSocket
+    _sql = neon(connectionString, {
+      fetchConnection: true,
+    })
   }
   return _sql
+}
+
+// ── Result normalization ────────────────────────────────────────────────
+// The Neon serverless driver may return results in different formats
+// depending on version and environment:
+//   - Array of rows: [{ col: val }, ...]          ← default
+//   - Object with rows: { rows: [{ col: val }] }  ← fullResults mode
+//   - Object with results: { results: [...] }      ← some versions
+// This function normalizes ALL formats to a plain array.
+function normalizeRows(result: any): any[] {
+  if (Array.isArray(result)) return result
+  if (result && typeof result === 'object') {
+    // fullResults: true → { rows: [...], fields: [...], ... }
+    if (Array.isArray(result.rows)) return result.rows
+    // Some API versions → { results: [...] }
+    if (Array.isArray(result.results)) return result.results
+    // Nested format → { result: { rows: [...] } }
+    if (result.result && typeof result.result === 'object' && Array.isArray(result.result.rows)) {
+      return result.result.rows
+    }
+    // Single row object (shouldn't happen for SELECT but be safe)
+    if (!Array.isArray(result) && result.id !== undefined) return [result]
+  }
+  // If we get here, log and return empty array
+  console.error('[DB normalizeRows] Unexpected result type:', typeof result,
+    'keys:', result && typeof result === 'object' ? Object.keys(result).join(',') : 'N/A',
+    'preview:', JSON.stringify(result).slice(0, 300))
+  return []
+}
+
+// ── Safe query execution ────────────────────────────────────────────────
+// Wraps sql.unsafe() with result normalization and error logging
+async function safeQuery(query: string, params: any[] = []): Promise<any[]> {
+  const sql = getSql()
+  try {
+    const raw = await sql.unsafe(query, params)
+    return normalizeRows(raw)
+  } catch (err: any) {
+    console.error('[DB safeQuery] Query failed:', query.slice(0, 200),
+      '| Error:', err.message || String(err))
+    throw err
+  }
+}
+
+// Also normalize tagged template literal results
+async function safeTemplate(strings: TemplateStringsArray, ...values: any[]): Promise<any[]> {
+  const sql = getSql()
+  try {
+    const raw = await sql(strings, ...values)
+    return normalizeRows(raw)
+  } catch (err: any) {
+    console.error('[DB safeTemplate] Query failed:',
+      strings.join('?').slice(0, 200),
+      '| Error:', err.message || String(err))
+    throw err
+  }
+}
+
+// ── Test connection (for diagnostics) ───────────────────────────────────
+export async function testConnection(): Promise<{ ok: boolean; details: Record<string, any> }> {
+  const details: Record<string, any> = {
+    dbUrlSet: !!process.env.DATABASE_URL,
+    dbUrlPrefix: process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 25) + '...' : 'NOT SET',
+    nodeEnv: process.env.NODE_ENV,
+  }
+
+  try {
+    const sql = getSql()
+    details.sqlType = typeof sql
+    details.sqlUnsafeType = typeof sql?.unsafe
+
+    // Test 1: Raw unsafe query
+    const rawResult = await sql.unsafe('SELECT 1 as test')
+    details.rawResultType = typeof rawResult
+    details.rawIsArray = Array.isArray(rawResult)
+    details.rawKeys = rawResult && typeof rawResult === 'object' ? Object.keys(rawResult).slice(0, 10).join(',') : 'N/A'
+    details.rawPreview = JSON.stringify(rawResult).slice(0, 200)
+
+    // Test 2: Normalized query
+    const rows = normalizeRows(rawResult)
+    details.normalizedRowCount = rows.length
+    details.normalizedPreview = JSON.stringify(rows).slice(0, 200)
+
+    // Test 3: Actual table query (plans table)
+    const planRows = await safeQuery('SELECT COUNT(*)::int as count FROM plans')
+    details.planCount = planRows.length > 0 ? (planRows[0] as any).count : 0
+
+    return { ok: true, details }
+  } catch (err: any) {
+    details.error = err.message || String(err)
+    details.errorStack = err.stack?.split('\n').slice(0, 3).join(' | ')
+    return { ok: false, details }
+  }
 }
 
 // ── Table mapping (model name → SQL table name) ────────────────────────
@@ -52,7 +148,7 @@ const TABLE_MAP: Record<string, string> = {
   systemSetting: 'system_settings',
 }
 
-// ── Column mapping (camelCase → snake_case) ─────────────────────────────
+// ── Column mapping (camelCase ↔ snake_case) ─────────────────────────────
 function camelToSnake(str: string): string {
   return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
 }
@@ -133,7 +229,7 @@ function buildOrderBy(orderBy: Record<string, string> | Record<string, string>[]
   return `${camelToSnake(key)} ${dir === 'asc' ? 'ASC' : 'DESC'}`
 }
 
-// ── Include resolver (handles relations via JOINs or extra queries) ─────
+// ── Include resolver (handles relations via extra queries) ─────────────
 const RELATIONS: Record<string, Record<string, { table: string; fk: string; type: 'one' | 'many'; reverseFk?: string }>> = {
   users: {
     store: { table: 'stores', fk: 'user_id', type: 'one' },
@@ -230,8 +326,10 @@ async function resolveIncludes(
       if (rel.reverseFk) {
         // The FK is on the related table pointing to our table
         const ids = [...new Set(mainRows.map(r => r.id))]
-        const sql = getSql()
-        const relRows = await sql`SELECT * FROM ${sql(relTable)} WHERE ${sql(rel.reverseFk)} = ANY(${ids})`
+        const relRows = await safeQuery(
+          `SELECT * FROM "${relTable}" WHERE "${rel.reverseFk}" = ANY($1)`,
+          [ids]
+        )
         const relMap = new Map<string, Record<string, any>>()
         for (const row of relRows) {
           const camelRow = rowToCamel(row)
@@ -249,8 +347,10 @@ async function resolveIncludes(
           for (const mainRow of mainRows) mainRow[relName] = null
           continue
         }
-        const sql = getSql()
-        const relRows = await sql`SELECT * FROM ${sql(relTable)} WHERE id = ANY(${fkValues})`
+        const relRows = await safeQuery(
+          `SELECT * FROM "${relTable}" WHERE id = ANY($1)`,
+          [fkValues]
+        )
         const relMap = new Map<string, Record<string, any>>()
         for (const row of relRows) {
           const camelRow = rowToCamel(row)
@@ -268,8 +368,10 @@ async function resolveIncludes(
     } else {
       // One-to-many: fetch related rows
       const ids = [...new Set(mainRows.map(r => r.id))]
-      const sql = getSql()
-      const relRows = await sql`SELECT * FROM ${sql(relTable)} WHERE ${sql(rel.fk)} = ANY(${ids})`
+      const relRows = await safeQuery(
+        `SELECT * FROM "${relTable}" WHERE "${rel.fk}" = ANY($1)`,
+        [ids]
+      )
       const relMap = new Map<string, Record<string, any>[]>()
       for (const row of relRows) {
         const camelRow = rowToCamel(row)
@@ -297,8 +399,7 @@ function createRepo(model: string) {
   return {
     findUnique: async (args: { where: Record<string, any>; include?: Record<string, any> }) => {
       const { sql: whereSql, params } = buildWhere(args.where)
-      const sql = getSql()
-      const rows = await sql.unsafe(`SELECT * FROM "${table}" WHERE ${whereSql} LIMIT 1`, params)
+      const rows = await safeQuery(`SELECT * FROM "${table}" WHERE ${whereSql} LIMIT 1`, params)
       if (!rows.length) return null
       const row = rowToCamel(rows[0] as Record<string, any>)
       if (args.include) {
@@ -321,8 +422,7 @@ function createRepo(model: string) {
       }
       parts.push('LIMIT 1')
 
-      const sql = getSql()
-      const rows = await sql.unsafe(parts.join(' '), params)
+      const rows = await safeQuery(parts.join(' '), params)
       if (!rows.length) return null
       const row = rowToCamel(rows[0] as Record<string, any>)
       if (args.include) {
@@ -354,8 +454,7 @@ function createRepo(model: string) {
         params.push(args.skip)
       }
 
-      const sql = getSql()
-      const rows = await sql.unsafe(parts.join(' '), params)
+      const rows = await safeQuery(parts.join(' '), params)
       const result = rows.map((r: any) => rowToCamel(r as Record<string, any>))
       if (args.include) {
         await resolveIncludes(result, table, args.include)
@@ -384,8 +483,7 @@ function createRepo(model: string) {
       const vals = Object.values(cleanData)
       const placeholders = vals.map((_, i) => `$${i + 1}`)
 
-      const sql = getSql()
-      const rows = await sql.unsafe(
+      const rows = await safeQuery(
         `INSERT INTO "${table}" (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`,
         vals
       )
@@ -399,13 +497,12 @@ function createRepo(model: string) {
         const nestedCols = Object.keys(nestedDataWithFk)
         const nestedVals = Object.values(nestedDataWithFk)
         const nestedPlaceholders = nestedVals.map((_, i) => `$${i + 1}`)
-        const nestedRows = await sql.unsafe(
+        const nestedRows = await safeQuery(
           `INSERT INTO "${nested.table}" (${nestedCols.map(c => `"${c}"`).join(', ')}) VALUES (${nestedPlaceholders.join(', ')}) RETURNING *`,
           nestedVals
         )
         const nestedRow = rowToCamel(nestedRows[0] as Record<string, any>)
         // Attach the nested result to the main row
-        const camelFk = nested.fk.replace(/_([a-z])/g, (_, l) => l.toUpperCase())
         const relName = Object.keys(args.data).find(k => {
           const val = (args.data as any)[k]
           return val && typeof val === 'object' && val.create
@@ -446,8 +543,7 @@ function createRepo(model: string) {
       }
 
       const allParams = [...setParams, ...whereParams]
-      const sql = getSql()
-      const rows = await sql.unsafe(
+      const rows = await safeQuery(
         `UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`,
         allParams
       )
@@ -461,16 +557,14 @@ function createRepo(model: string) {
 
     delete: async (args: { where: Record<string, any> }) => {
       const { sql: whereSql, params } = buildWhere(args.where)
-      const sql = getSql()
-      const rows = await sql.unsafe(`DELETE FROM "${table}" WHERE ${whereSql} RETURNING *`, params)
+      const rows = await safeQuery(`DELETE FROM "${table}" WHERE ${whereSql} RETURNING *`, params)
       if (!rows.length) return null
       return rowToCamel(rows[0] as Record<string, any>)
     },
 
     deleteMany: async (args: { where: Record<string, any> }) => {
       const { sql: whereSql, params } = buildWhere(args.where)
-      const sql = getSql()
-      const rows = await sql.unsafe(`DELETE FROM "${table}" WHERE ${whereSql} RETURNING *`, params)
+      const rows = await safeQuery(`DELETE FROM "${table}" WHERE ${whereSql} RETURNING *`, params)
       return { count: rows.length }
     },
 
@@ -488,8 +582,7 @@ function createRepo(model: string) {
       }
 
       const allParams = [...setParams, ...whereParams]
-      const sql = getSql()
-      const rows = await sql.unsafe(
+      const rows = await safeQuery(
         `UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`,
         allParams
       )
@@ -506,8 +599,7 @@ function createRepo(model: string) {
         params.push(...whereParams)
       }
 
-      const sql = getSql()
-      const rows = await sql.unsafe(parts.join(' '), params)
+      const rows = await safeQuery(parts.join(' '), params)
       return (rows[0] as any).count
     },
 
@@ -550,8 +642,7 @@ function createRepo(model: string) {
         params.push(...whereParams)
       }
 
-      const sql = getSql()
-      const rows = await sql.unsafe(parts.join(' '), params)
+      const rows = await safeQuery(parts.join(' '), params)
       const row = rows[0] as Record<string, any>
       // Convert to Prisma-like aggregate result
       const result: Record<string, any> = {}
@@ -580,10 +671,9 @@ function createRepo(model: string) {
     },
 
     upsert: async (args: { where: Record<string, any>; create: Record<string, any>; update: Record<string, any>; include?: Record<string, any> }) => {
-      const sql = getSql()
       // Try to find first
       const { sql: whereSql, params: whereParams } = buildWhere(args.where)
-      const existing = await sql.unsafe(`SELECT * FROM "${table}" WHERE ${whereSql} LIMIT 1`, whereParams)
+      const existing = await safeQuery(`SELECT * FROM "${table}" WHERE ${whereSql} LIMIT 1`, whereParams)
 
       if (existing.length > 0) {
         // Update
@@ -596,7 +686,7 @@ function createRepo(model: string) {
           setParams.push(value)
         }
         const allParams = [...setParams, ...whereParams]
-        const rows = await sql.unsafe(`UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`, allParams)
+        const rows = await safeQuery(`UPDATE "${table}" SET ${setParts.join(', ')} WHERE ${whereSql} RETURNING *`, allParams)
         const row = rowToCamel(rows[0] as Record<string, any>)
         if (args.include) await resolveIncludes([row], table, args.include)
         return row
@@ -606,7 +696,7 @@ function createRepo(model: string) {
         const cols = Object.keys(data)
         const vals = Object.values(data)
         const placeholders = vals.map((_, i) => `$${i + 1}`)
-        const rows = await sql.unsafe(
+        const rows = await safeQuery(
           `INSERT INTO "${table}" (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`,
           vals
         )
@@ -617,14 +707,13 @@ function createRepo(model: string) {
     },
 
     createMany: async (args: { data: Record<string, any>[] }) => {
-      const sql = getSql()
       let count = 0
       for (const item of args.data) {
         const data = objToSnake(item)
         const cols = Object.keys(data)
         const vals = Object.values(data)
         const placeholders = vals.map((_, i) => `$${i + 1}`)
-        await sql.unsafe(
+        await safeQuery(
           `INSERT INTO "${table}" (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${placeholders.join(', ')})`,
           vals
         )
@@ -653,8 +742,7 @@ export const db = new Proxy({} as any, {
     if (prop === '$queryRaw') {
       return {
         unsafe: async (query: string, params?: any[]) => {
-          const sql = getSql()
-          return sql.unsafe(query, params || [])
+          return safeQuery(query, params || [])
         }
       }
     }
