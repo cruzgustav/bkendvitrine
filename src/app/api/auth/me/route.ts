@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { getUserFromRequest, apiResponse, unauthorizedError } from '@/lib/auth'
 
 export async function GET(request: Request) {

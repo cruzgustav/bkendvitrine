@@ -1,30 +1,23 @@
 {
   // ============================================================
   // Configuração Cloudflare Workers para o tabackvitrine
-  // Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+  // Deploy: npm run cf:deploy
   //
-  // IMPORTANTE: Este projeto usa @opennextjs/cloudflare que é
-  // projetado para Workers (não Pages). Use `wrangler deploy`.
-  //
-  // O banco de dados usa @neondatabase/serverless (HTTP/WebSocket),
-  // não precisa de Hyperdrive nem de TCP direto.
-  // Configure DATABASE_URL como secret no Cloudflare Dashboard.
+  // O banco usa @neondatabase/serverless (HTTP/WebSocket)
+  // Configure DATABASE_URL e JWT_SECRET como secrets no Dashboard
   // ============================================================
 
   "name": "bkendvitrine",
   "compatibility_flags": ["nodejs_compat"],
   "compatibility_date": "2025-04-17",
 
-  // Entry point do Worker (gerado pelo OpenNext)
   "main": ".open-next/worker.js",
 
-  // Assets estáticos (HTML, CSS, JS, imagens)
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
 
-  // Variáveis de ambiente (NÃO colocar secrets aqui - usar wrangler secret)
   "vars": {
     "CORS_ALLOWED_ORIGINS": "*"
   }

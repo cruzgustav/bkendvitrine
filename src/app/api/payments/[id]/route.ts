@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { db } from '@/lib/db'
 import { getUserFromRequest, apiResponse, apiError, unauthorizedError } from '@/lib/auth'
 
