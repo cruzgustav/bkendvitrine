@@ -2,7 +2,11 @@
   "name": "bkendvitrine",
   "compatibility_flags": ["nodejs_compat"],
   "compatibility_date": "2025-04-17",
-  "pages_build_output_dir": ".open-next",
+  "main": ".open-next/worker.js",
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
   "vars": {
     "CORS_ALLOWED_ORIGINS": "*"
   }

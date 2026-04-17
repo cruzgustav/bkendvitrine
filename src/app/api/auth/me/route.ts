@@ -1,4 +1,3 @@
-export const runtime = 'edge'
 
 import { getUserFromRequest, apiResponse, unauthorizedError } from '@/lib/auth'
 

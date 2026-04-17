@@ -1,6 +1,5 @@
 import { apiResponse, apiError, unauthorizedError } from '@/lib/auth'
 
-export const runtime = 'edge'
 
 // Backup e Restore usam 'fs' (sistema de arquivos) que não funciona no Cloudflare Edge.
 // Essas rotas estão desabilitadas no deploy Cloudflare.
