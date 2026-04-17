@@ -229,6 +229,14 @@ function buildWhere(where: Record<string, any>, startIndex = 1): { sql: string; 
       conditions.push(`(${andConditions.join(' AND ')})`)
       continue
     }
+    if (key === 'NOT') {
+      // Prisma NOT: { id: "xxx" } → NOT (id = $1)
+      const { sql: notSql, params: notParams } = buildWhere(value, idx)
+      conditions.push(`NOT (${notSql})`)
+      params.push(...notParams)
+      idx += notParams.length
+      continue
+    }
 
     // Column name: use as-is (camelCase, matching Prisma field names)
     const col = `"${key}"`
@@ -660,7 +668,13 @@ function createRepo(model: string) {
       const setParams: any[] = []
       let paramIdx = 1
 
+      // Filter out undefined values from update data
+      const cleanData: Record<string, any> = {}
       for (const [key, value] of Object.entries(args.data)) {
+        if (value !== undefined) cleanData[key] = value
+      }
+
+      for (const [key, value] of Object.entries(cleanData)) {
         if (value && typeof value === 'object' && !Array.isArray(value)) {
           if ('decrement' in value) {
             setParts.push(`"${key}" = "${key}" - $${paramIdx++}`)
