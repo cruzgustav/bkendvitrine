@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient } from '@prisma/client/edge'
 import { PrismaNeon } from '@prisma/adapter-neon'
 import { neon } from '@neondatabase/serverless'
 
@@ -13,7 +13,7 @@ function createPrismaClient() {
     throw new Error('DATABASE_URL is not set. Configure it in Cloudflare Dashboard or .env file.')
   }
 
-  // Neon serverless driver: usa HTTP/WebSocket em vez de TCP
+  // Neon serverless driver: usa HTTP em vez de TCP
   // Funciona perfeitamente no Cloudflare Workers / Edge Runtime
   const sql = neon(connectionString)
   const adapter = new PrismaNeon(sql)
