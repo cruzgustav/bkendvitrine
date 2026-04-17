@@ -17,8 +17,6 @@ jobs:
 
       - run: npm ci
 
-      - run: npx prisma generate --schema=./prisma/schema.prisma
-
       - run: npx @opennextjs/cloudflare build
 
       - run: npx wrangler deploy

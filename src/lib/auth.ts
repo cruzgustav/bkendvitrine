@@ -1,6 +1,20 @@
 import { db } from './db'
 import { NextRequest } from 'next/server'
-import { User } from '@prisma/client'
+
+// User type (replaces Prisma User type)
+export type User = {
+  id: string
+  email: string
+  password: string
+  name: string | null
+  phone: string | null
+  avatar: string | null
+  role: string
+  emailVerified: Date | null
+  createdAt: Date
+  updatedAt: Date
+  store?: any
+}
 
 // Simple password hashing using Web Crypto API
 export async function hashPassword(password: string): Promise<string> {

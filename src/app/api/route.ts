@@ -1,4 +1,3 @@
-
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 
@@ -15,13 +14,12 @@ export async function GET() {
   };
 
   try {
-    // Teste simples de conexão com o banco
-    await db.$queryRaw`SELECT 1 as test`;
+    const result = await db.plan.findMany({ where: {} });
     diagnostics.db_connection = "OK ✅";
+    diagnostics.db_plan_count = result.length;
   } catch (dbError: any) {
     diagnostics.db_connection = "FAILED ❌";
     diagnostics.db_error = dbError.message || String(dbError);
-    diagnostics.db_error_code = dbError.code || "no code";
   }
 
   return NextResponse.json(diagnostics);
