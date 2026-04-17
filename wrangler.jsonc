@@ -6,11 +6,9 @@
   // IMPORTANTE: Este projeto usa @opennextjs/cloudflare que é
   // projetado para Workers (não Pages). Use `wrangler deploy`.
   //
-  // SETUP HYPERDRIVE (obrigatório para PostgreSQL):
-  //   1. Rode: npx wrangler hyperdrive create bkendvitrine-db \
-  //        --connection-string="postgresql://user:pass@host:5432/dbname"
-  //   2. Copie o ID retornado para o campo "id" abaixo
-  //   3. Coloque sua connection string real no campo "localConnectionString"
+  // O banco de dados usa @neondatabase/serverless (HTTP/WebSocket),
+  // não precisa de Hyperdrive nem de TCP direto.
+  // Configure DATABASE_URL como secret no Cloudflare Dashboard.
   // ============================================================
 
   "name": "bkendvitrine",
@@ -25,16 +23,6 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
-
-  // Hyperdrive: Pool de conexões PostgreSQL para Cloudflare Workers
-  // ⚠️ OBRIGATÓRIO: Preencha "id" e "localConnectionString" com seus dados reais!
-  "hyperdrive": [
-    {
-      "binding": "HYPERDRIVE",
-      "id": "399ce5ea75f2444687720a50b305025f",
-      "localConnectionString": "postgresql://neondb_owner:npg_XlFdSE8PHBg9@ep-soft-waterfall-ahjpnv4m-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-    }
-  ],
 
   // Variáveis de ambiente (NÃO colocar secrets aqui - usar wrangler secret)
   "vars": {
