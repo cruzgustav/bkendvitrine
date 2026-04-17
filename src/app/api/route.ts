@@ -18,16 +18,54 @@ export async function GET() {
   diagnostics.connection_test = connTest.ok ? "OK ✅" : "FAILED ❌";
   diagnostics.connection_details = connTest.details;
 
-  // Also test a simple Prisma-like query via db proxy
+  // Test Prisma-like queries
   try {
     const result = await db.plan.findMany({ where: {} });
     diagnostics.db_query = "OK ✅";
     diagnostics.db_plan_count = result.length;
-    diagnostics.db_plans_preview = result.slice(0, 2);
   } catch (dbError: any) {
     diagnostics.db_query = "FAILED ❌";
     diagnostics.db_query_error = dbError.message || String(dbError);
-    diagnostics.db_query_stack = dbError.stack?.split('\n').slice(0, 5);
+  }
+
+  // Discover actual column names in products table
+  try {
+    const cols = await db.$queryRaw.unsafe(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'products' ORDER BY ordinal_position"
+    );
+    diagnostics.products_columns = cols.map((c: any) => c.column_name);
+  } catch (e: any) {
+    diagnostics.products_columns_error = e.message || String(e);
+  }
+
+  // Also check stores columns
+  try {
+    const cols = await db.$queryRaw.unsafe(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'stores' ORDER BY ordinal_position"
+    );
+    diagnostics.stores_columns = cols.map((c: any) => c.column_name);
+  } catch (e: any) {
+    diagnostics.stores_columns_error = e.message || String(e);
+  }
+
+  // Check categories columns
+  try {
+    const cols = await db.$queryRaw.unsafe(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'categories' ORDER BY ordinal_position"
+    );
+    diagnostics.categories_columns = cols.map((c: any) => c.column_name);
+  } catch (e: any) {
+    diagnostics.categories_columns_error = e.message || String(e);
+  }
+
+  // Check users columns
+  try {
+    const cols = await db.$queryRaw.unsafe(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'users' ORDER BY ordinal_position"
+    );
+    diagnostics.users_columns = cols.map((c: any) => c.column_name);
+  } catch (e: any) {
+    diagnostics.users_columns_error = e.message || String(e);
   }
 
   return NextResponse.json(diagnostics);
