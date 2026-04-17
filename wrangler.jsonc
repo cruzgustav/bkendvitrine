@@ -1,38 +1,43 @@
 {
-	// ============================================================
-	// Configuração Cloudflare Workers para o tabackvitrine
-	// Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
-	//
-	// IMPORTANTE: Este projeto usa @opennextjs/cloudflare que é
-	// projetado para Workers (não Pages). Use `wrangler deploy`.
-	//
-	// SETUP HYPERDRIVE (obrigatório para PostgreSQL):
-	//   npx wrangler hyperdrive create bkendvitrine-db \
-	//     --connection-string="postgresql://user:pass@host:5432/dbname"
-	//   Copie o ID retornado para o campo "id" abaixo.
-	// ============================================================
-	"name": "bkendvitrine",
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
-	"compatibility_date": "2025-04-17",
-	// Entry point do Worker (gerado pelo OpenNext)
-	"main": ".open-next/worker.js",
-	// Assets estáticos (HTML, CSS, JS, imagens)
-	"assets": {
-		"directory": ".open-next/assets",
-		"binding": "ASSETS"
-	},
-	// Hyperdrive: Pool de conexões PostgreSQL para Cloudflare Workers
-	// Permite que o pg.Pool conecte ao PostgreSQL através do pool TCP do CF
-	"hyperdrive": [
-		{
-			"binding": "HYPERDRIVE",
-			"id": "399ce5ea75f2444687720a50b305025f"
-		}
-	],
-	// Variáveis de ambiente (NÃO colocar secrets aqui - usar wrangler secret)
-	"vars": {
-		"CORS_ALLOWED_ORIGINS": "*"
-	}
+  // ============================================================
+  // Configuração Cloudflare Workers para o tabackvitrine
+  // Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+  //
+  // IMPORTANTE: Este projeto usa @opennextjs/cloudflare que é
+  // projetado para Workers (não Pages). Use `wrangler deploy`.
+  //
+  // SETUP HYPERDRIVE (obrigatório para PostgreSQL):
+  //   1. Rode: npx wrangler hyperdrive create bkendvitrine-db \
+  //        --connection-string="postgresql://user:pass@host:5432/dbname"
+  //   2. Copie o ID retornado para o campo "id" abaixo
+  //   3. Coloque sua connection string real no campo "localConnectionString"
+  // ============================================================
+
+  "name": "bkendvitrine",
+  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_date": "2025-04-17",
+
+  // Entry point do Worker (gerado pelo OpenNext)
+  "main": ".open-next/worker.js",
+
+  // Assets estáticos (HTML, CSS, JS, imagens)
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  // Hyperdrive: Pool de conexões PostgreSQL para Cloudflare Workers
+  // ⚠️ OBRIGATÓRIO: Preencha "id" e "localConnectionString" com seus dados reais!
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "399ce5ea75f2444687720a50b305025f",
+      "localConnectionString": "postgresql://neondb_owner:npg_XlFdSE8PHBg9@ep-soft-waterfall-ahjpnv4m-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+    }
+  ],
+
+  // Variáveis de ambiente (NÃO colocar secrets aqui - usar wrangler secret)
+  "vars": {
+    "CORS_ALLOWED_ORIGINS": "*"
+  }
 }
