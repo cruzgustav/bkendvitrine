@@ -13,7 +13,6 @@ import type { NextRequest } from 'next/server'
  */
 
 // Forçar edge runtime (necessário para Cloudflare Workers)
-export const runtime = 'experimental-edge'
 
 // Origens permitidas (separadas por vírgula na env var)
 function getAllowedOrigins(): string[] {

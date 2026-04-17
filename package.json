@@ -13,10 +13,9 @@
     "db:reset": "prisma migrate reset",
     "backup": "bun run scripts/backup.ts",
     "seed": "bun run scripts/seed.ts",
-    "cf:build": "npx @opennextjs/cloudflare build",
-    "cf:deploy": "npx @opennextjs/cloudflare build && npx wrangler deploy",
-    "cf:dev": "npx @opennextjs/cloudflare build && npx wrangler dev",
-    "cf:secret": "npx wrangler secret put DATABASE_URL"
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
