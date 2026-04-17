@@ -276,12 +276,15 @@ function buildOrderBy(orderBy: Record<string, string> | Record<string, string>[]
 }
 
 // ── Relations ───────────────────────────────────────────────────────────
-const RELATIONS: Record<string, Record<string, { table: string; fk: string; type: 'one' | 'many'; reverseFk?: string }>> = {
+// localFk:  FK column on the MAIN table (BelongsTo)  e.g. products.categoryId → categories.id
+// remoteFk: FK column on the RELATED table (HasOne)   e.g. stores.userId → users.id
+// fk:       FK column on the RELATED table (for 'many' includes + nested creates)
+const RELATIONS: Record<string, Record<string, { table: string; fk?: string; localFk?: string; remoteFk?: string; type: 'one' | 'many' }>> = {
   users: {
-    store: { table: 'stores', fk: 'userId', type: 'one' },
+    store: { table: 'stores', remoteFk: 'userId', fk: 'userId', type: 'one' },
   },
   stores: {
-    user: { table: 'users', fk: 'id', type: 'one', reverseFk: 'userId' },
+    user: { table: 'users', localFk: 'userId', type: 'one' },
     categories: { table: 'categories', fk: 'storeId', type: 'many' },
     products: { table: 'products', fk: 'storeId', type: 'many' },
     orders: { table: 'orders', fk: 'storeId', type: 'many' },
@@ -290,13 +293,13 @@ const RELATIONS: Record<string, Record<string, { table: string; fk: string; type
     collections: { table: 'collections', fk: 'storeId', type: 'many' },
     payments: { table: 'payments', fk: 'storeId', type: 'many' },
     subscriptions: { table: 'subscriptions', fk: 'userId', type: 'many' },
-    customization: { table: 'store_customizations', fk: 'storeId', type: 'one' },
-    settings: { table: 'store_settings', fk: 'storeId', type: 'one' },
+    customization: { table: 'store_customizations', remoteFk: 'storeId', fk: 'storeId', type: 'one' },
+    settings: { table: 'store_settings', remoteFk: 'storeId', fk: 'storeId', type: 'one' },
     analytics: { table: 'store_analytics', fk: 'storeId', type: 'many' },
   },
   products: {
-    store: { table: 'stores', fk: 'storeId', type: 'one' },
-    category: { table: 'categories', fk: 'id', type: 'one', reverseFk: 'categoryId' },
+    store: { table: 'stores', localFk: 'storeId', type: 'one' },
+    category: { table: 'categories', localFk: 'categoryId', type: 'one' },
     images: { table: 'product_images', fk: 'productId', type: 'many' },
     variants: { table: 'product_variants', fk: 'productId', type: 'many' },
     reviews: { table: 'product_reviews', fk: 'productId', type: 'many' },
@@ -304,47 +307,46 @@ const RELATIONS: Record<string, Record<string, { table: string; fk: string; type
     orderItems: { table: 'order_items', fk: 'productId', type: 'many' },
   },
   orders: {
-    store: { table: 'stores', fk: 'storeId', type: 'one' },
-    customer: { table: 'customers', fk: 'id', type: 'one', reverseFk: 'customerId' },
+    store: { table: 'stores', localFk: 'storeId', type: 'one' },
+    customer: { table: 'customers', localFk: 'customerId', type: 'one' },
     items: { table: 'order_items', fk: 'orderId', type: 'many' },
     payments: { table: 'payments', fk: 'orderId', type: 'many' },
   },
   order_items: {
-    product: { table: 'products', fk: 'id', type: 'one', reverseFk: 'productId' },
-    variant: { table: 'product_variants', fk: 'id', type: 'one', reverseFk: 'variantId' },
-    order: { table: 'orders', fk: 'orderId', type: 'one' },
+    product: { table: 'products', localFk: 'productId', type: 'one' },
+    variant: { table: 'product_variants', localFk: 'variantId', type: 'one' },
+    order: { table: 'orders', localFk: 'orderId', type: 'one' },
   },
   payments: {
-    order: { table: 'orders', fk: 'id', type: 'one', reverseFk: 'orderId' },
-    subscription: { table: 'subscriptions', fk: 'id', type: 'one', reverseFk: 'subscriptionId' },
-    user: { table: 'users', fk: 'id', type: 'one', reverseFk: 'userId' },
-    store: { table: 'stores', fk: 'id', type: 'one' },
+    order: { table: 'orders', localFk: 'orderId', type: 'one' },
+    subscription: { table: 'subscriptions', localFk: 'subscriptionId', type: 'one' },
+    user: { table: 'users', localFk: 'userId', type: 'one' },
   },
   subscriptions: {
-    plan: { table: 'plans', fk: 'planId', type: 'one' },
-    user: { table: 'users', fk: 'userId', type: 'one' },
+    plan: { table: 'plans', localFk: 'planId', type: 'one' },
+    user: { table: 'users', localFk: 'userId', type: 'one' },
     payments: { table: 'payments', fk: 'subscriptionId', type: 'many' },
   },
   customers: {
-    store: { table: 'stores', fk: 'storeId', type: 'one' },
+    store: { table: 'stores', localFk: 'storeId', type: 'one' },
     orders: { table: 'orders', fk: 'customerId', type: 'many' },
   },
   categories: {
-    store: { table: 'stores', fk: 'storeId', type: 'one' },
+    store: { table: 'stores', localFk: 'storeId', type: 'one' },
     products: { table: 'products', fk: 'categoryId', type: 'many' },
   },
   coupons: {
-    store: { table: 'stores', fk: 'storeId', type: 'one' },
+    store: { table: 'stores', localFk: 'storeId', type: 'one' },
   },
   collections: {
-    store: { table: 'stores', fk: 'storeId', type: 'one' },
+    store: { table: 'stores', localFk: 'storeId', type: 'one' },
     products: { table: 'products', fk: 'storeId', type: 'many' },
   },
   product_images: {
-    product: { table: 'products', fk: 'productId', type: 'one' },
+    product: { table: 'products', localFk: 'productId', type: 'one' },
   },
   product_variants: {
-    product: { table: 'products', fk: 'productId', type: 'one' },
+    product: { table: 'products', localFk: 'productId', type: 'one' },
   },
   plans: {
     subscriptions: { table: 'subscriptions', fk: 'planId', type: 'many' },
@@ -379,33 +381,38 @@ async function resolveIncludes(
     }
 
     if (rel.type === 'one') {
-      if (rel.reverseFk) {
+      if (rel.remoteFk) {
+        // HasOne: FK is on the RELATED table pointing back to main table
+        // e.g. users.store → stores.userId points to users.id
         const ids = [...new Set(mainRows.map(r => r.id))]
-        let query = `SELECT * FROM "${relTable}" WHERE "${rel.reverseFk}" = ANY($1)`
-        const queryParams: any[] = [ids]
+        let query = `SELECT * FROM "${relTable}" WHERE "${rel.remoteFk}" = ANY($1)`
         if (orderBy) query += ` ORDER BY ${buildOrderBy(orderBy)}`
-        const relRows = await safeQuery(query, queryParams)
+        const relRows = await safeQuery(query, [ids])
         const relMap = new Map<string, Record<string, any>>()
         for (const row of relRows) {
-          const fkValue = (row as any)[rel.reverseFk!]
-          relMap.set(fkValue, row)
+          relMap.set((row as any)[rel.remoteFk!], row)
         }
         for (const mainRow of mainRows) {
           mainRow[relName] = relMap.get(mainRow.id) || null
         }
       } else {
-        const fkValues = [...new Set(mainRows.map(r => (r as any)[rel.fk]))].filter(Boolean)
+        // BelongsTo: FK is on the MAIN table pointing to related table
+        // e.g. products.category → products.categoryId points to categories.id
+        const localFk = rel.localFk!
+        const fkValues = [...new Set(mainRows.map(r => (r as any)[localFk]))].filter(Boolean)
         if (!fkValues.length) {
           for (const mainRow of mainRows) mainRow[relName] = null
           continue
         }
-        const relRows = await safeQuery(`SELECT * FROM "${relTable}" WHERE id = ANY($1)`, [fkValues])
+        let query = `SELECT * FROM "${relTable}" WHERE "id" = ANY($1)`
+        if (orderBy) query += ` ORDER BY ${buildOrderBy(orderBy)}`
+        const relRows = await safeQuery(query, [fkValues])
         const relMap = new Map<string, Record<string, any>>()
         for (const row of relRows) {
           relMap.set(row.id, row)
         }
         for (const mainRow of mainRows) {
-          mainRow[relName] = relMap.get((mainRow as any)[rel.fk]) || null
+          mainRow[relName] = relMap.get((mainRow as any)[localFk]) || null
         }
       }
       // Nested includes
@@ -428,7 +435,7 @@ async function resolveIncludes(
       const relRows = await safeQuery(query, queryParams)
       const relMap = new Map<string, Record<string, any>[]>()
       for (const row of relRows) {
-        const fkValue = (row as any)[rel.fk]
+        const fkValue = (row as any)[rel.fk!]
         if (!relMap.has(fkValue)) relMap.set(fkValue, [])
         relMap.get(fkValue)!.push(row)
       }
@@ -462,7 +469,7 @@ async function resolveCount(
 
   if (countSpec === true) {
     for (const [relName, rel] of Object.entries(tableRelations)) {
-      if (rel.type !== 'many') continue
+      if (rel.type !== 'many' || !rel.fk) continue
       const ids = [...new Set(mainRows.map(r => r.id))]
       const rows = await safeQuery(
         `SELECT "${rel.fk}" as fk, COUNT(*)::int as count FROM "${rel.table}" WHERE "${rel.fk}" = ANY($1) GROUP BY "${rel.fk}"`,
@@ -479,7 +486,7 @@ async function resolveCount(
     for (const [relName, shouldCount] of Object.entries(countSpec)) {
       if (!shouldCount) continue
       const rel = tableRelations[relName]
-      if (!rel || rel.type !== 'many') continue
+      if (!rel || rel.type !== 'many' || !rel.fk) continue
       const ids = [...new Set(mainRows.map(r => r.id))]
       const rows = await safeQuery(
         `SELECT "${rel.fk}" as fk, COUNT(*)::int as count FROM "${rel.table}" WHERE "${rel.fk}" = ANY($1) GROUP BY "${rel.fk}"`,
@@ -559,10 +566,14 @@ function createRepo(model: string) {
           // Nested create: { images: { create: [...] } }
           const relInfo = RELATIONS[table]?.[key]
           if (relInfo) {
+            // FK on the nested/related table that points back to the main record
+            // For 'many': fk is the FK on the nested table (e.g., product_images.productId)
+            // For 'one':  fk or remoteFk is the FK on the nested table (e.g., stores.userId)
+            const nestedFk = relInfo.fk || relInfo.remoteFk || ''
             nestedCreates.push({
               relName: key,
               table: relInfo.table,
-              fk: relInfo.reverseFk || relInfo.fk,
+              fk: nestedFk,
               data: value.create,
             })
           }
@@ -605,8 +616,14 @@ function createRepo(model: string) {
           nestedData[nested.fk] = row.id
           const nestedWithDefaults = applyDefaults(nestedData, nested.table)
 
-          const nestedCols = Object.keys(nestedWithDefaults)
-          const nestedVals = Object.values(nestedWithDefaults)
+          // Remove undefined values
+          const nestedFinal: Record<string, any> = {}
+          for (const [key, value] of Object.entries(nestedWithDefaults)) {
+            if (value !== undefined) nestedFinal[key] = value
+          }
+
+          const nestedCols = Object.keys(nestedFinal)
+          const nestedVals = Object.values(nestedFinal)
           const nestedPlaceholders = nestedVals.map((_, i) => `$${i + 1}`)
           const nestedRows = await safeQuery(
             `INSERT INTO "${nested.table}" (${nestedCols.map(c => `"${c}"`).join(', ')}) VALUES (${nestedPlaceholders.join(', ')}) RETURNING *`,
