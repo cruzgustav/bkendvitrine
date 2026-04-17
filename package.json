@@ -13,9 +13,9 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
     "seed": "node scripts/seed.mjs",
-    "pages:build": "node scripts/build-pages.js",
-    "pages:preview": "node scripts/build-pages.js && npx wrangler pages dev .open-next",
-    "pages:deploy": "node scripts/build-pages.js && npx wrangler pages deploy .open-next"
+    "pages:build": "npx @opennextjs/cloudflare build && node scripts/rename-worker.js",
+    "pages:preview": "npm run pages:build && npx wrangler pages dev .open-next",
+    "pages:deploy": "npm run pages:build && npx wrangler pages deploy .open-next"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
