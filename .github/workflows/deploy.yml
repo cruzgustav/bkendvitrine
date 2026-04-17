@@ -1,4 +1,4 @@
-name: Deploy to Cloudflare Workers
+name: Deploy to Cloudflare Pages
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    name: Build & Deploy
+    name: Build & Deploy to Pages
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,14 +22,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate Prisma client
+      - name: Generate Prisma Client
         run: npx prisma generate
 
-      - name: Build OpenNext for Cloudflare
-        run: npx @opennextjs/cloudflare build
+      - name: Build for Cloudflare Pages
+        run: node scripts/build-pages.js
 
-      - name: Deploy to Cloudflare Workers
-        run: npx wrangler deploy
+      - name: Deploy to Cloudflare Pages
+        run: npx wrangler pages deploy .open-next --project-name=bkendvitrine
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

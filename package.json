@@ -1,21 +1,20 @@
 {
-  "name": "nextjs_tailwind_shadcn_ts",
-  "version": "0.2.0",
+  "name": "bkendvitrine",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000 2>&1 | tee dev.log",
+    "dev": "next dev -p 3000",
     "build": "next build",
-    "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
+    "start": "next start",
     "lint": "eslint .",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
-    "backup": "bun run scripts/backup.ts",
-    "seed": "bun run scripts/seed.ts",
-    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload"
+    "seed": "node scripts/seed.mjs",
+    "pages:build": "node scripts/build-pages.js",
+    "pages:preview": "node scripts/build-pages.js && npx wrangler pages dev .open-next",
+    "pages:deploy": "node scripts/build-pages.js && npx wrangler pages deploy .open-next"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
