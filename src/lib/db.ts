@@ -7,6 +7,12 @@
  * The `/edge` import doesn't support driver adapters either.
  * So we bypass Prisma entirely and use raw SQL via the Neon HTTP driver.
  *
+ * WHY NOT sql.unsafe()?
+ * On Cloudflare Workers, `sql.unsafe(query, params)` returns a descriptor object
+ * like {"sql":"SELECT ..."} instead of executing the query. The primary API
+ * (tagged template literals) works correctly, so we convert all parameterized
+ * queries ($1, $2, ...) into tagged template literal calls.
+ *
  * This module provides a Prisma-compatible API so routes don't need changes:
  *   db.user.findUnique({ where: { email } })
  *   db.product.findMany({ where: { storeId }, include: { category: true } })
@@ -23,68 +29,105 @@ function getSql() {
     if (!connectionString) {
       throw new Error('DATABASE_URL is not set. Configure it in Cloudflare Dashboard or .env file.')
     }
-    // Use fetchConnection for edge runtimes (Cloudflare Workers)
-    // This ensures the HTTP-based SQL API is used instead of WebSocket
-    _sql = neon(connectionString, {
-      fetchConnection: true,
-    })
+    _sql = neon(connectionString)
   }
   return _sql
 }
 
 // ── Result normalization ────────────────────────────────────────────────
-// The Neon serverless driver may return results in different formats
-// depending on version and environment:
+// The Neon serverless driver may return results in different formats:
 //   - Array of rows: [{ col: val }, ...]          ← default
 //   - Object with rows: { rows: [{ col: val }] }  ← fullResults mode
-//   - Object with results: { results: [...] }      ← some versions
 // This function normalizes ALL formats to a plain array.
 function normalizeRows(result: any): any[] {
   if (Array.isArray(result)) return result
   if (result && typeof result === 'object') {
-    // fullResults: true → { rows: [...], fields: [...], ... }
     if (Array.isArray(result.rows)) return result.rows
-    // Some API versions → { results: [...] }
     if (Array.isArray(result.results)) return result.results
-    // Nested format → { result: { rows: [...] } }
     if (result.result && typeof result.result === 'object' && Array.isArray(result.result.rows)) {
       return result.result.rows
     }
-    // Single row object (shouldn't happen for SELECT but be safe)
-    if (!Array.isArray(result) && result.id !== undefined) return [result]
   }
-  // If we get here, log and return empty array
-  console.error('[DB normalizeRows] Unexpected result type:', typeof result,
-    'keys:', result && typeof result === 'object' ? Object.keys(result).join(',') : 'N/A',
-    'preview:', JSON.stringify(result).slice(0, 300))
+  // Unexpected format - log and return empty
+  console.error('[DB normalizeRows] Unexpected result:',
+    typeof result,
+    Array.isArray(result) ? 'array' : 'not-array',
+    result && typeof result === 'object' ? 'keys=' + Object.keys(result).join(',') : String(result))
   return []
 }
 
-// ── Safe query execution ────────────────────────────────────────────────
-// Wraps sql.unsafe() with result normalization and error logging
+// ── Convert $1/$2 parameterized SQL to tagged template literal call ────
+// sql.unsafe('SELECT * FROM users WHERE id = $1', ['123'])
+//   → sql`SELECT * FROM users WHERE id = ${'123'}`
+//
+// This is necessary because sql.unsafe() returns a descriptor object
+// on Cloudflare Workers instead of executing the query.
+function sqlToTemplateArgs(query: string, params: any[]): any[] {
+  if (params.length === 0) {
+    // No params: create a simple TemplateStringsArray
+    const strings = [query] as any as TemplateStringsArray
+    ;(strings as any).raw = [query]
+    return [strings]
+  }
+
+  // Split the query at $N placeholders
+  // e.g., "SELECT * FROM t WHERE a = $1 AND b = $2"
+  //   → ["SELECT * FROM t WHERE a = ", " AND b = ", ""]
+  //   with params in order
+  const parts = query.split(/\$(\d+)/)
+  const strings: string[] = []
+  const orderedParams: any[] = []
+
+  // parts[0] = text before first placeholder
+  // parts[1] = digit of first placeholder (e.g., "1")
+  // parts[2] = text after first placeholder
+  // parts[3] = digit of second placeholder, etc.
+  let currentString = parts[0]
+  for (let i = 1; i < parts.length; i += 2) {
+    const paramIndex = parseInt(parts[i], 10)
+    const nextText = parts[i + 1] || ''
+
+    strings.push(currentString)
+    orderedParams.push(params[paramIndex - 1]) // $1 → params[0]
+    currentString = nextText
+  }
+  strings.push(currentString)
+
+  const templateStrings = strings as any as TemplateStringsArray
+  ;(templateStrings as any).raw = [...strings]
+
+  return [templateStrings, ...orderedParams]
+}
+
+// ── Safe query execution using tagged template literals ─────────────────
 async function safeQuery(query: string, params: any[] = []): Promise<any[]> {
   const sql = getSql()
   try {
-    const raw = await sql.unsafe(query, params)
+    // Primary approach: use tagged template literal (works on Cloudflare Workers)
+    const templateArgs = sqlToTemplateArgs(query, params)
+    const raw = await sql(...templateArgs)
     return normalizeRows(raw)
-  } catch (err: any) {
-    console.error('[DB safeQuery] Query failed:', query.slice(0, 200),
-      '| Error:', err.message || String(err))
-    throw err
-  }
-}
+  } catch (primaryErr: any) {
+    console.error('[DB safeQuery] Template literal failed:',
+      primaryErr.message || String(primaryErr))
 
-// Also normalize tagged template literal results
-async function safeTemplate(strings: TemplateStringsArray, ...values: any[]): Promise<any[]> {
-  const sql = getSql()
-  try {
-    const raw = await sql(strings, ...values)
-    return normalizeRows(raw)
-  } catch (err: any) {
-    console.error('[DB safeTemplate] Query failed:',
-      strings.join('?').slice(0, 200),
-      '| Error:', err.message || String(err))
-    throw err
+    // Fallback: try sql.unsafe() (might work in some environments)
+    try {
+      const raw = await sql.unsafe(query, params)
+      const rows = normalizeRows(raw)
+      if (rows.length > 0) return rows
+      // If normalizeRows returned empty but raw wasn't empty, it might be a descriptor
+      if (raw && typeof raw === 'object' && !Array.isArray(raw) && raw.sql) {
+        // sql.unsafe() returned a descriptor, not results — throw to indicate failure
+        throw new Error('sql.unsafe() returned descriptor instead of results')
+      }
+      return rows
+    } catch (fallbackErr: any) {
+      console.error('[DB safeQuery] sql.unsafe() fallback also failed:',
+        fallbackErr.message || String(fallbackErr))
+      // Throw the original error
+      throw primaryErr
+    }
   }
 }
 
@@ -101,26 +144,40 @@ export async function testConnection(): Promise<{ ok: boolean; details: Record<s
     details.sqlType = typeof sql
     details.sqlUnsafeType = typeof sql?.unsafe
 
-    // Test 1: Raw unsafe query
-    const rawResult = await sql.unsafe('SELECT 1 as test')
-    details.rawResultType = typeof rawResult
-    details.rawIsArray = Array.isArray(rawResult)
-    details.rawKeys = rawResult && typeof rawResult === 'object' ? Object.keys(rawResult).slice(0, 10).join(',') : 'N/A'
-    details.rawPreview = JSON.stringify(rawResult).slice(0, 200)
+    // Test 1: Tagged template literal (primary API)
+    const templateResult = await sql`SELECT 1 as test`
+    details.templateResultType = typeof templateResult
+    details.templateIsArray = Array.isArray(templateResult)
+    details.templateKeys = templateResult && typeof templateResult === 'object' && !Array.isArray(templateResult)
+      ? Object.keys(templateResult).slice(0, 10).join(',')
+      : 'N/A'
+    details.templatePreview = JSON.stringify(templateResult).slice(0, 300)
+    const templateRows = normalizeRows(templateResult)
+    details.templateRowCount = templateRows.length
 
-    // Test 2: Normalized query
-    const rows = normalizeRows(rawResult)
-    details.normalizedRowCount = rows.length
-    details.normalizedPreview = JSON.stringify(rows).slice(0, 200)
+    // Test 2: sql.unsafe() (secondary API - known to be broken on Workers)
+    try {
+      const unsafeResult = await sql.unsafe('SELECT 1 as test')
+      details.unsafeResultType = typeof unsafeResult
+      details.unsafeIsArray = Array.isArray(unsafeResult)
+      details.unsafePreview = JSON.stringify(unsafeResult).slice(0, 300)
+    } catch (unsafeErr: any) {
+      details.unsafeError = unsafeErr.message || String(unsafeErr)
+    }
 
-    // Test 3: Actual table query (plans table)
+    // Test 3: safeQuery (our wrapper that uses template literals)
+    const safeRows = await safeQuery('SELECT 1 as test')
+    details.safeQueryRows = safeRows.length
+    details.safeQueryPreview = JSON.stringify(safeRows).slice(0, 200)
+
+    // Test 4: Actual table query
     const planRows = await safeQuery('SELECT COUNT(*)::int as count FROM plans')
-    details.planCount = planRows.length > 0 ? (planRows[0] as any).count : 0
+    details.planCount = planRows.length > 0 ? (planRows[0] as any).count : -1
 
     return { ok: true, details }
   } catch (err: any) {
     details.error = err.message || String(err)
-    details.errorStack = err.stack?.split('\n').slice(0, 3).join(' | ')
+    details.errorStack = err.stack?.split('\n').slice(0, 5).join(' | ')
     return { ok: false, details }
   }
 }
@@ -181,7 +238,6 @@ function buildWhere(where: Record<string, any>, startIndex = 1): { sql: string; 
     if (value === null) {
       conditions.push(`${col} IS NULL`)
     } else if (typeof value === 'object' && value !== null) {
-      // Handle special operators
       if ('in' in value) {
         const placeholders = (value.in as any[]).map(() => `$${idx++}`)
         conditions.push(`${col} IN (${placeholders.join(', ')})`)
@@ -322,7 +378,6 @@ async function resolveIncludes(
     const relTable = rel.table
 
     if (rel.type === 'one') {
-      // One-to-one: fetch related rows by foreign key
       if (rel.reverseFk) {
         // The FK is on the related table pointing to our table
         const ids = [...new Set(mainRows.map(r => r.id))]
@@ -341,7 +396,6 @@ async function resolveIncludes(
         }
       } else {
         // The FK is on our table pointing to the related table
-        const fkCol = camelToSnake(rel.fk)
         const fkValues = [...new Set(mainRows.map(r => (r as any)[rel.fk])).filter(Boolean)]
         if (!fkValues.length) {
           for (const mainRow of mainRows) mainRow[relName] = null
@@ -492,7 +546,6 @@ function createRepo(model: string) {
       // Execute nested creates
       for (const nested of nestedCreates) {
         const nestedDataWithFk = { ...nested.data }
-        // For store.create inside user.create, user_id is the FK on stores
         nestedDataWithFk[nested.fk] = row.id
         const nestedCols = Object.keys(nestedDataWithFk)
         const nestedVals = Object.values(nestedDataWithFk)
@@ -502,7 +555,6 @@ function createRepo(model: string) {
           nestedVals
         )
         const nestedRow = rowToCamel(nestedRows[0] as Record<string, any>)
-        // Attach the nested result to the main row
         const relName = Object.keys(args.data).find(k => {
           const val = (args.data as any)[k]
           return val && typeof val === 'object' && val.create
@@ -528,7 +580,6 @@ function createRepo(model: string) {
 
       for (const [key, value] of Object.entries(data)) {
         if (value && typeof value === 'object' && !Array.isArray(value)) {
-          // Handle special operators like { decrement: n }
           if ('decrement' in value) {
             setParts.push(`"${key}" = "${key}" - $${paramIdx++}`)
             setParams.push(value.decrement)
@@ -600,7 +651,7 @@ function createRepo(model: string) {
       }
 
       const rows = await safeQuery(parts.join(' '), params)
-      return (rows[0] as any).count
+      return (rows[0] as any)?.count ?? 0
     },
 
     aggregate: async (args: { where?: Record<string, any>; _max?: Record<string, boolean>; _sum?: Record<string, boolean>; _avg?: Record<string, boolean>; _min?: Record<string, boolean>; _count?: boolean | Record<string, boolean> }) => {
@@ -644,7 +695,6 @@ function createRepo(model: string) {
 
       const rows = await safeQuery(parts.join(' '), params)
       const row = rows[0] as Record<string, any>
-      // Convert to Prisma-like aggregate result
       const result: Record<string, any> = {}
       for (const [key, value] of Object.entries(row)) {
         const camelKey = key.replace(/_([a-z])/g, (_, l) => l.toUpperCase())
@@ -671,12 +721,10 @@ function createRepo(model: string) {
     },
 
     upsert: async (args: { where: Record<string, any>; create: Record<string, any>; update: Record<string, any>; include?: Record<string, any> }) => {
-      // Try to find first
       const { sql: whereSql, params: whereParams } = buildWhere(args.where)
       const existing = await safeQuery(`SELECT * FROM "${table}" WHERE ${whereSql} LIMIT 1`, whereParams)
 
       if (existing.length > 0) {
-        // Update
         const data = objToSnake(args.update)
         const setParts: string[] = []
         const setParams: any[] = []
@@ -691,7 +739,6 @@ function createRepo(model: string) {
         if (args.include) await resolveIncludes([row], table, args.include)
         return row
       } else {
-        // Create
         const data = objToSnake(args.create)
         const cols = Object.keys(data)
         const vals = Object.values(data)
